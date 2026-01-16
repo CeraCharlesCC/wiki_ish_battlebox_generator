@@ -396,44 +396,46 @@ class _BattleBoxRow extends StatelessWidget {
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFFCED7DE))),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 120,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            decoration: const BoxDecoration(
-              color: Color(0xFFE8EDF2),
-              border: Border(
-                right: BorderSide(color: Color(0xFFCED7DE)),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              width: 120,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              decoration: const BoxDecoration(
+                color: Color(0xFFE8EDF2),
+                border: Border(
+                  right: BorderSide(color: Color(0xFFCED7DE)),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ),
+                  if (showAdd)
+                    _IconButton(
+                      icon: Icons.add,
+                      tooltip: 'Add item',
+                      onPressed: onAdd,
+                    ),
+                ],
               ),
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    label,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                ),
-                if (showAdd)
-                  _IconButton(
-                    icon: Icons.add,
-                    tooltip: 'Add item',
-                    onPressed: onAdd,
-                  ),
-              ],
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: child,
+              ),
             ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: child,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
