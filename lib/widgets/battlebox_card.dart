@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/battlebox_models.dart';
 import '../state/battlebox_controller.dart';
 import 'editable_value.dart';
+import 'wikitext_inline_renderer.dart';
 
 class BattleBoxCard extends ConsumerWidget {
   const BattleBoxCard({super.key});
@@ -82,17 +83,18 @@ class _HeaderBlock extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       color: const Color(0xFF2F4457),
-      child: EditableValue(
-        value: title,
-        onCommit: onTitleChanged,
-        placeholder: 'Conflict title',
-        textAlign: TextAlign.center,
-        multiline: true,
-        textStyle: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-            ),
-      ),
+        child: EditableValue(
+          value: title,
+          onCommit: onTitleChanged,
+          placeholder: 'Conflict title',
+          textAlign: TextAlign.center,
+          multiline: true,
+          displayBuilder: _inlineRenderer,
+          textStyle: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+        ),
     );
   }
 }
@@ -157,6 +159,7 @@ class _MediaBlock extends StatelessWidget {
             placeholder: 'Caption',
             textAlign: TextAlign.center,
             multiline: true,
+            displayBuilder: _inlineRenderer,
             textStyle: Theme.of(context).textTheme.bodySmall,
           ),
         ],
@@ -203,6 +206,7 @@ class _SingleFieldRow extends StatelessWidget {
               onCommit: (newValue) => onChanged(section.id, newValue),
               placeholder: 'tap to edit',
               multiline: true,
+              displayBuilder: _inlineRenderer,
             ),
           ),
           if (value.trim().isNotEmpty)
@@ -249,6 +253,7 @@ class _ListFieldRow extends StatelessWidget {
                       onCommit: (value) => onChanged(section.id, i, value),
                       placeholder: 'tap to edit',
                       multiline: true,
+                      displayBuilder: _inlineRenderer,
                     ),
                   ),
                   _IconButton(
@@ -363,6 +368,7 @@ class _MultiColumnBlock extends StatelessWidget {
                                 onChanged(section.id, i, value),
                             multiline: true,
                             placeholder: 'tap to edit',
+                            displayBuilder: _inlineRenderer,
                           ),
                         ),
                       ],
@@ -465,4 +471,17 @@ class _IconButton extends StatelessWidget {
       constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
     );
   }
+}
+
+Widget _inlineRenderer(
+  BuildContext context,
+  String value,
+  TextStyle? style,
+  TextAlign align,
+) {
+  return WikitextInlineRenderer(
+    text: value,
+    textStyle: style,
+    textAlign: align,
+  );
 }

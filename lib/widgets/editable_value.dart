@@ -8,6 +8,12 @@ class EditableValue extends StatefulWidget {
   final TextAlign textAlign;
   final bool multiline;
   final ValueChanged<String> onCommit;
+  final Widget Function(
+    BuildContext context,
+    String value,
+    TextStyle? style,
+    TextAlign align,
+  )? displayBuilder;
 
   const EditableValue({
     super.key,
@@ -17,6 +23,7 @@ class EditableValue extends StatefulWidget {
     this.textStyle,
     this.textAlign = TextAlign.start,
     this.multiline = false,
+    this.displayBuilder,
   });
 
   @override
@@ -142,15 +149,25 @@ class _EditableValueState extends State<EditableValue> {
           )
         : textStyle;
 
+    final displayChild = widget.value.trim().isEmpty ||
+            widget.displayBuilder == null
+        ? Text(
+            displayText,
+            style: displayStyle,
+            textAlign: widget.textAlign,
+          )
+        : widget.displayBuilder!(
+            context,
+            widget.value,
+            displayStyle,
+            widget.textAlign,
+          );
+
     return InkWell(
       onTap: _startEdit,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Text(
-          displayText,
-          style: displayStyle,
-          textAlign: widget.textAlign,
-        ),
+        child: displayChild,
       ),
     );
   }
