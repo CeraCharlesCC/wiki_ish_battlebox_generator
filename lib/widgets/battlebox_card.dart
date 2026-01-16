@@ -57,6 +57,7 @@ class BattleBoxCard extends ConsumerWidget {
                       onAddColumn: controller.addBelligerentColumn,
                       onDeleteColumn: controller.deleteBelligerentColumn,
                       onChanged: controller.updateMultiColumnCell,
+                      showAddColumn: section.id == 'combatants',
                     ),
                   _ => const SizedBox.shrink(),
                 },
@@ -269,12 +270,14 @@ class _MultiColumnBlock extends StatelessWidget {
   final VoidCallback onAddColumn;
   final void Function(int index) onDeleteColumn;
   final void Function(String sectionId, int columnIndex, String value) onChanged;
+  final bool showAddColumn;
 
   const _MultiColumnBlock({
     required this.section,
     required this.onAddColumn,
     required this.onDeleteColumn,
     required this.onChanged,
+    required this.showAddColumn,
   });
 
   @override
@@ -299,16 +302,18 @@ class _MultiColumnBlock extends StatelessWidget {
                         ),
                   ),
                 ),
-                _IconButton(
-                  icon: Icons.add_circle_outline,
-                  tooltip: 'Add belligerent',
-                  onPressed: onAddColumn,
-                  color: Colors.white,
-                ),
+                if (showAddColumn)
+                  _IconButton(
+                    icon: Icons.add_circle_outline,
+                    tooltip: 'Add belligerent',
+                    onPressed: onAddColumn,
+                    color: Colors.white,
+                  ),
               ],
             ),
           ),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               for (var i = 0; i < section.columns.length; i++)
                 Expanded(
