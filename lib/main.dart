@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'screens/battlebox_editor_screen.dart';
 
 void main() {
-  runApp(const WikiishBattleBoxGenerator());
+  runApp(const ProviderScope(child: WikiishBattleBoxGenerator()));
 }
 
 class WikiishBattleBoxGenerator extends StatelessWidget {
@@ -10,15 +13,15 @@ class WikiishBattleBoxGenerator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Battlebox Generator',
       theme: ThemeData(
-        colorScheme: .fromSeed(seedColor: Colors.lightBlue),
-      ),
-      home: const Scaffold(
-        body: Center(
-          child: Text('WIP'),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF2F4457),
         ),
-      )
+        fontFamily: 'Georgia',
+        useMaterial3: true,
+      ),
+      home: const BattleBoxEditorScreen(),
     );
   }
 }
