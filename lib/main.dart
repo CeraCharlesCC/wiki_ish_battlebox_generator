@@ -15,9 +15,7 @@ class WikiishBattleBoxGenerator extends StatelessWidget {
     return MaterialApp(
       title: 'Battlebox Generator',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2F4457),
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2F4457)),
         fontFamily: 'Georgia',
         useMaterial3: true,
       ),

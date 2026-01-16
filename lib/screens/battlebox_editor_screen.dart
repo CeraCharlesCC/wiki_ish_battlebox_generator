@@ -51,73 +51,89 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
     }
   }
 
+  void _togglePanel() {
+    if (_showPanel) {
+      FocusScope.of(context).unfocus();
+    }
+    setState(() {
+      _showPanel = !_showPanel;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 960;
-        final showPanel = isWide || _showPanel;
-        return Scaffold(
-          appBar: AppBar(
-            title: const Text('Battlebox Editor'),
-            actions: [
-              if (!isWide)
-                IconButton(
-                  tooltip: showPanel ? 'Hide wikitext' : 'Show wikitext',
-                  icon: Icon(showPanel ? Icons.code_off : Icons.code),
-                  onPressed: () {
-                    setState(() {
-                      _showPanel = !_showPanel;
-                    });
-                  },
-                ),
-            ],
-          ),
-          body: Stack(
-            children: [
-              _Background(),
-              Padding(
+    final isWide = MediaQuery.sizeOf(context).width >= 960;
+    final showPanel = isWide || _showPanel;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Battlebox Editor'),
+        actions: [
+          if (!isWide)
+            IconButton(
+              tooltip: showPanel ? 'Collapse wikitext' : 'Expand wikitext',
+              icon: Icon(
+                showPanel ? Icons.expand_less : Icons.expand_more,
+              ),
+              onPressed: _togglePanel,
+            ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          _Background(),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
-                child: isWide
-                    ? Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SizedBox(
-                            width: 360,
-                            child: WikitextPanel(
-                              controller: _wikitextController,
-                              onImport: _importWikitext,
-                              onExport: _exportWikitext,
-                              onCopy: _copyWikitext,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight,
+                  ),
+                  child: isWide
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              width: 360,
+                              child: WikitextPanel(
+                                controller: _wikitextController,
+                                onImport: _importWikitext,
+                                onExport: _exportWikitext,
+                                onCopy: _copyWikitext,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 24),
-                          const Expanded(
-                            child: Align(
-                              alignment: Alignment.topCenter,
-                              child: BattleBoxCard(),
+                            const SizedBox(width: 24),
+                            const Expanded(
+                              child: Align(
+                                alignment: Alignment.topCenter,
+                                child: BattleBoxCard(),
+                              ),
                             ),
-                          ),
-                        ],
-                      )
-                    : Column(
-                        children: [
-                          if (showPanel)
+                          ],
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
                             WikitextPanel(
                               controller: _wikitextController,
                               onImport: _importWikitext,
                               onExport: _exportWikitext,
                               onCopy: _copyWikitext,
+                              isCollapsible: true,
+                              isExpanded: showPanel,
+                              onToggle: _togglePanel,
                             ),
-                          const SizedBox(height: 16),
-                          const Center(child: BattleBoxCard()),
-                        ],
-                      ),
-              ),
-            ],
+                            const SizedBox(height: 16),
+                            const Center(child: BattleBoxCard()),
+                          ],
+                        ),
+                ),
+              );
+            },
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 }
@@ -127,6 +143,9 @@ class WikitextPanel extends StatelessWidget {
   final VoidCallback onImport;
   final VoidCallback onExport;
   final VoidCallback onCopy;
+  final bool isCollapsible;
+  final bool isExpanded;
+  final VoidCallback? onToggle;
 
   const WikitextPanel({
     super.key,
@@ -134,10 +153,14 @@ class WikitextPanel extends StatelessWidget {
     required this.onImport,
     required this.onExport,
     required this.onCopy,
+    this.isCollapsible = false,
+    this.isExpanded = true,
+    this.onToggle,
   });
 
   @override
   Widget build(BuildContext context) {
+    final bodyVisible = !isCollapsible || isExpanded;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -154,44 +177,74 @@ class WikitextPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Wikitext',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF5A4733),
+          GestureDetector(
+            onTap: isCollapsible ? onToggle : null,
+            behavior: HitTestBehavior.opaque,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Wikitext',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF5A4733),
+                        ),
+                  ),
                 ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: controller,
-            minLines: 12,
-            maxLines: 18,
-            style: const TextStyle(fontFamily: 'Courier New', fontSize: 12),
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              isDense: true,
+                if (isCollapsible)
+                  Icon(
+                    bodyVisible ? Icons.expand_less : Icons.expand_more,
+                    color: const Color(0xFF5A4733),
+                  ),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: onImport,
-                icon: const Icon(Icons.file_download),
-                label: const Text('Import'),
-              ),
-              OutlinedButton.icon(
-                onPressed: onExport,
-                icon: const Icon(Icons.file_upload),
-                label: const Text('Export'),
-              ),
-              FilledButton.icon(
-                onPressed: onCopy,
-                icon: const Icon(Icons.copy),
-                label: const Text('Copy'),
-              ),
-            ],
+          AnimatedCrossFade(
+            firstChild: const SizedBox.shrink(),
+            secondChild: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 8),
+                TextField(
+                  controller: controller,
+                  minLines: 12,
+                  maxLines: 18,
+                  style: const TextStyle(
+                    fontFamily: 'Courier New',
+                    fontSize: 12,
+                  ),
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: onImport,
+                      icon: const Icon(Icons.file_download),
+                      label: const Text('Import'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: onExport,
+                      icon: const Icon(Icons.file_upload),
+                      label: const Text('Export'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: onCopy,
+                      icon: const Icon(Icons.copy),
+                      label: const Text('Copy'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            crossFadeState: bodyVisible
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 180),
           ),
         ],
       ),
