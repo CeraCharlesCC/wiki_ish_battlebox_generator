@@ -196,9 +196,7 @@ _IconMacro? _parseIconMacro(String content, String rawTemplate) {
       if (key == 'host' || key == 'wiki') {
         hostOverride = value;
       }
-    } else if (code == null) {
-      code = part;
-    }
+    } else code ??= part;
   }
   if (code == null || code.isEmpty) {
     return null;

@@ -5,10 +5,12 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/battlebox_models.dart';
 import '../services/image_exporter.dart';
 import '../services/wikitext_parser.dart';
 import '../state/battlebox_controller.dart';
 import '../widgets/battlebox_card.dart';
+import '../widgets/wikitext_inline_renderer.dart';
 
 const _wikiSurface = Color(0xFFF8F9FA);
 const _wikiBorder = Color(0xFFA2A9B1);
@@ -80,7 +82,12 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
       _isExporting = true;
     });
     try {
+      // Precache all network images before capture
+      await _precacheAllImages();
+
+      // Wait for the frame to complete after precaching
       await WidgetsBinding.instance.endOfFrame;
+
       final boundary =
           _battleBoxKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) {
@@ -130,6 +137,123 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
         });
       }
     }
+  }
+
+  Future<void> _precacheAllImages() async {
+    if (!mounted) return;
+
+    final doc = ref.read(battleBoxProvider);
+    final resolver = ref.read(wikiIconResolverProvider);
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+
+    final imageUrls = <Future<String?>>[];
+
+    // Collect all text content that may contain flag macros
+    final allTexts = <String>[];
+    allTexts.add(doc.title);
+
+    for (final section in doc.sections) {
+      if (!section.isVisible) continue;
+
+      switch (section) {
+        case MediaSection section:
+          final url = section.imageUrl;
+          if (url != null && url.trim().isNotEmpty) {
+            // Directly add media URL for precaching
+            imageUrls.add(Future.value(url));
+          }
+          if (section.caption != null) {
+            allTexts.add(section.caption!);
+          }
+        case SingleFieldSection section:
+          if (section.value != null) {
+            allTexts.add(section.value!.raw);
+          }
+        case ListFieldSection section:
+          for (final item in section.items) {
+            allTexts.add(item.raw);
+          }
+        case MultiColumnSection section:
+          for (final column in section.cells) {
+            for (final cell in column) {
+              allTexts.add(cell.raw);
+            }
+          }
+      }
+    }
+
+    // Parse flag macros from all text and resolve their URLs
+    final flagMacroPattern = RegExp(r'\{\{([^{}]+)\}\}');
+    for (final text in allTexts) {
+      for (final match in flagMacroPattern.allMatches(text)) {
+        final inner = match.group(1) ?? '';
+        final macro = _parseFlagMacro(inner);
+        if (macro != null) {
+          final fontSize = 14.0;
+          final height = fontSize + 2;
+          final width = height * 1.4;
+          final widthPx = (width * dpr).round();
+
+          imageUrls.add(resolver.resolveFlagIcon(
+            templateName: macro.templateName,
+            code: macro.code,
+            widthPx: widthPx,
+            hostOverride: macro.hostOverride,
+          ));
+        }
+      }
+    }
+
+    // Resolve all URLs and precache them
+    final resolvedUrls = await Future.wait(imageUrls);
+    final precacheFutures = <Future<void>>[];
+
+    for (final url in resolvedUrls) {
+      if (url != null && url.isNotEmpty && mounted) {
+        precacheFutures.add(
+          precacheImage(NetworkImage(url), context).catchError((_) {}),
+        );
+      }
+    }
+
+    await Future.wait(precacheFutures);
+  }
+
+  _FlagMacro? _parseFlagMacro(String content) {
+    final parts = content.split('|').map((p) => p.trim()).toList();
+    if (parts.isEmpty) return null;
+
+    final templateName = parts.first;
+    final templateKey = templateName.toLowerCase();
+    if (templateKey != 'flagicon' && templateKey != 'flag icon') {
+      return null;
+    }
+
+    String? code;
+    String? hostOverride;
+    for (var i = 1; i < parts.length; i++) {
+      final part = parts[i];
+      if (part.isEmpty) continue;
+
+      final eqIndex = part.indexOf('=');
+      if (eqIndex != -1) {
+        final key = part.substring(0, eqIndex).trim().toLowerCase();
+        final value = part.substring(eqIndex + 1).trim();
+        if (key == 'host' || key == 'wiki') {
+          hostOverride = value;
+        }
+      } else {
+        code ??= part;
+      }
+    }
+
+    if (code == null || code.isEmpty) return null;
+
+    return _FlagMacro(
+      templateName: templateName,
+      code: code,
+      hostOverride: hostOverride,
+    );
   }
 
   @override
@@ -363,4 +487,16 @@ class _Background extends StatelessWidget {
       ),
     );
   }
+}
+
+class _FlagMacro {
+  final String templateName;
+  final String code;
+  final String? hostOverride;
+
+  const _FlagMacro({
+    required this.templateName,
+    required this.code,
+    this.hostOverride,
+  });
 }
