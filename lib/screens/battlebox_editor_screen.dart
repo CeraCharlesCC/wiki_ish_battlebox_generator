@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -85,7 +86,13 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
       // Precache all network images before capture
       await _precacheAllImages();
 
-      // Wait for the frame to complete after precaching
+      // Give widgets (FutureBuilders/Image decoders) a chance to rebuild/paint
+      // with the now-cached URLs and decoded images before we snapshot.
+      if (mounted) {
+        setState(() {});
+      }
+      await WidgetsBinding.instance.endOfFrame;
+      // One extra frame makes the export far more reliable for inline WidgetSpans.
       await WidgetsBinding.instance.endOfFrame;
 
       final boundary =
@@ -139,12 +146,30 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
     }
   }
 
+  List<double> _candidateFontSizes(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final sizes = <double?>[
+      t.titleMedium?.fontSize,
+      t.titleSmall?.fontSize,
+      t.bodyMedium?.fontSize,
+      t.bodySmall?.fontSize,
+    ].whereType<double>().where((s) => s > 0).toSet().toList();
+
+    // Fallback for any custom styling / null fontSizes.
+    if (!sizes.contains(14.0)) sizes.add(14.0);
+
+    // Small-to-large ordering (not required, but nice for determinism)
+    sizes.sort();
+    return sizes;
+  }
+
   Future<void> _precacheAllImages() async {
     if (!mounted) return;
 
     final doc = ref.read(battleBoxProvider);
     final resolver = ref.read(wikiIconResolverProvider);
     final dpr = MediaQuery.of(context).devicePixelRatio;
+    final fontSizes = _candidateFontSizes(context);
 
     final imageUrls = <Future<String?>>[];
 
@@ -189,17 +214,21 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
         final inner = match.group(1) ?? '';
         final macro = _parseFlagMacro(inner);
         if (macro != null) {
-          final fontSize = 14.0;
-          final height = fontSize + 2;
-          final width = height * 1.4;
-          final widthPx = (width * dpr).round();
+          // IMPORTANT: precache for the same size(s) the UI will request.
+          // Otherwise the resolver cache key won't match and the export will
+          // capture the grey loading placeholder.
+          for (final fontSize in fontSizes) {
+            final height = fontSize + 2;
+            final width = height * 1.4;
+            final widthPx = (width * dpr).round();
 
-          imageUrls.add(resolver.resolveFlagIcon(
-            templateName: macro.templateName,
-            code: macro.code,
-            widthPx: widthPx,
-            hostOverride: macro.hostOverride,
-          ));
+            imageUrls.add(resolver.resolveFlagIcon(
+              templateName: macro.templateName,
+              code: macro.code,
+              widthPx: widthPx,
+              hostOverride: macro.hostOverride,
+            ));
+          }
         }
       }
     }
