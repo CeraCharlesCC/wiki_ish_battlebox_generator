@@ -8,6 +8,8 @@ class EditableValue extends StatefulWidget {
   final TextAlign textAlign;
   final bool multiline;
   final ValueChanged<String> onCommit;
+  final bool isReadOnly;
+  final bool showPlaceholderWhenEmpty;
   final Widget Function(
     BuildContext context,
     String value,
@@ -23,6 +25,8 @@ class EditableValue extends StatefulWidget {
     this.textStyle,
     this.textAlign = TextAlign.start,
     this.multiline = false,
+    this.isReadOnly = false,
+    this.showPlaceholderWhenEmpty = true,
     this.displayBuilder,
   });
 
@@ -139,36 +143,42 @@ class _EditableValueState extends State<EditableValue> {
       );
     }
 
-    final displayText = widget.value.trim().isEmpty
-        ? widget.placeholder
-        : widget.value;
-    final displayStyle = widget.value.trim().isEmpty
+    final isEmpty = widget.value.trim().isEmpty;
+    final showPlaceholder = widget.showPlaceholderWhenEmpty && isEmpty;
+    final displayText = showPlaceholder ? widget.placeholder : widget.value;
+    final displayStyle = showPlaceholder
         ? textStyle?.copyWith(
             color: Theme.of(context).hintColor,
             fontStyle: FontStyle.italic,
           )
         : textStyle;
 
-    final displayChild = widget.value.trim().isEmpty ||
-            widget.displayBuilder == null
-        ? Text(
-            displayText,
-            style: displayStyle,
-            textAlign: widget.textAlign,
-          )
-        : widget.displayBuilder!(
-            context,
-            widget.value,
-            displayStyle,
-            widget.textAlign,
-          );
+    final displayChild =
+        showPlaceholder || isEmpty || widget.displayBuilder == null
+            ? Text(
+                displayText,
+                style: displayStyle,
+                textAlign: widget.textAlign,
+              )
+            : widget.displayBuilder!(
+                context,
+                widget.value,
+                displayStyle,
+                widget.textAlign,
+              );
+
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: displayChild,
+    );
+
+    if (widget.isReadOnly) {
+      return content;
+    }
 
     return InkWell(
       onTap: _startEdit,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: displayChild,
-      ),
+      child: content,
     );
   }
 }

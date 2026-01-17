@@ -1,7 +1,11 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../services/image_exporter.dart';
 import '../services/wikitext_parser.dart';
 import '../state/battlebox_controller.dart';
 import '../widgets/battlebox_card.dart';
@@ -22,7 +26,9 @@ class BattleBoxEditorScreen extends ConsumerStatefulWidget {
 class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
   late final TextEditingController _wikitextController;
   final WikitextParser _parser = WikitextParser();
+  final GlobalKey _battleBoxKey = GlobalKey();
   bool _showPanel = true;
+  bool _isExporting = false;
 
   @override
   void initState() {
@@ -63,6 +69,67 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
     setState(() {
       _showPanel = !_showPanel;
     });
+  }
+
+  Future<void> _exportImage() async {
+    if (_isExporting) {
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isExporting = true;
+    });
+    try {
+      await WidgetsBinding.instance.endOfFrame;
+      final boundary =
+          _battleBoxKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Export failed: card not ready.')),
+          );
+        }
+        return;
+      }
+      final pixelRatio = MediaQuery.of(context).devicePixelRatio;
+      final image = await boundary.toImage(pixelRatio: pixelRatio);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Export failed: could not render PNG.')),
+          );
+        }
+        return;
+      }
+      final savedPath = await exportPng(
+        byteData.buffer.asUint8List(),
+        filename: 'battlebox.png',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              savedPath == null
+                  ? 'Image download started.'
+                  : 'Image saved to $savedPath',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Export failed.')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isExporting = false;
+        });
+      }
+    }
   }
 
   @override
@@ -109,13 +176,20 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
                                 onImport: _importWikitext,
                                 onExport: _exportWikitext,
                                 onCopy: _copyWikitext,
+                                onExportImage: _exportImage,
+                                isExporting: _isExporting,
                               ),
                             ),
                             const SizedBox(width: 24),
-                            const Expanded(
+                            Expanded(
                               child: Align(
                                 alignment: Alignment.topCenter,
-                                child: BattleBoxCard(),
+                                child: RepaintBoundary(
+                                  key: _battleBoxKey,
+                                  child: BattleBoxCard(
+                                    isExportMode: _isExporting,
+                                  ),
+                                ),
                               ),
                             ),
                           ],
@@ -128,12 +202,21 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
                               onImport: _importWikitext,
                               onExport: _exportWikitext,
                               onCopy: _copyWikitext,
+                              onExportImage: _exportImage,
+                              isExporting: _isExporting,
                               isCollapsible: true,
                               isExpanded: showPanel,
                               onToggle: _togglePanel,
                             ),
                             const SizedBox(height: 16),
-                            const Center(child: BattleBoxCard()),
+                            Center(
+                              child: RepaintBoundary(
+                                key: _battleBoxKey,
+                                child: BattleBoxCard(
+                                  isExportMode: _isExporting,
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                 ),
@@ -151,6 +234,8 @@ class WikitextPanel extends StatelessWidget {
   final VoidCallback onImport;
   final VoidCallback onExport;
   final VoidCallback onCopy;
+  final VoidCallback onExportImage;
+  final bool isExporting;
   final bool isCollapsible;
   final bool isExpanded;
   final VoidCallback? onToggle;
@@ -161,6 +246,8 @@ class WikitextPanel extends StatelessWidget {
     required this.onImport,
     required this.onExport,
     required this.onCopy,
+    required this.onExportImage,
+    this.isExporting = false,
     this.isCollapsible = false,
     this.isExpanded = true,
     this.onToggle,
@@ -237,6 +324,11 @@ class WikitextPanel extends StatelessWidget {
                       onPressed: onExport,
                       icon: const Icon(Icons.file_upload),
                       label: const Text('Export'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: isExporting ? null : onExportImage,
+                      icon: const Icon(Icons.image_outlined),
+                      label: const Text('Export Image'),
                     ),
                     FilledButton.icon(
                       onPressed: onCopy,

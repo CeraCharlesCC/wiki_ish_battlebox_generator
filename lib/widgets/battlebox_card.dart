@@ -14,7 +14,12 @@ const _infoboxColumnHeaderBackground = Color(0xFFF2F4F7);
 const _infoboxIconColor = Color(0xFF54595D);
 
 class BattleBoxCard extends ConsumerWidget {
-  const BattleBoxCard({super.key});
+  final bool isExportMode;
+
+  const BattleBoxCard({
+    super.key,
+    this.isExportMode = false,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -35,6 +40,7 @@ class BattleBoxCard extends ConsumerWidget {
             _HeaderBlock(
               title: doc.title,
               onTitleChanged: controller.setTitle,
+              isExportMode: isExportMode,
             ),
             for (final section in doc.sections)
               if (section.isVisible)
@@ -42,17 +48,20 @@ class BattleBoxCard extends ConsumerWidget {
                   MediaSection section => _MediaBlock(
                       section: section,
                       onUpdate: controller.setMedia,
+                      isExportMode: isExportMode,
                     ),
                   SingleFieldSection section => _SingleFieldRow(
                       section: section,
                       onChanged: controller.setSingleField,
                       onClear: controller.clearSingleField,
+                      isExportMode: isExportMode,
                     ),
                   ListFieldSection section => _ListFieldRow(
                       section: section,
                       onAdd: controller.addListItem,
                       onChanged: controller.updateListItem,
                       onDelete: controller.deleteListItem,
+                      isExportMode: isExportMode,
                     ),
                   MultiColumnSection section => _MultiColumnBlock(
                       section: section,
@@ -60,6 +69,7 @@ class BattleBoxCard extends ConsumerWidget {
                       onDeleteColumn: controller.deleteBelligerentColumn,
                       onChanged: controller.updateMultiColumnCell,
                       showAddColumn: section.id == 'combatants',
+                      isExportMode: isExportMode,
                     ),
                   _ => const SizedBox.shrink(),
                 },
@@ -73,10 +83,12 @@ class BattleBoxCard extends ConsumerWidget {
 class _HeaderBlock extends StatelessWidget {
   final String title;
   final ValueChanged<String> onTitleChanged;
+  final bool isExportMode;
 
   const _HeaderBlock({
     required this.title,
     required this.onTitleChanged,
+    required this.isExportMode,
   });
 
   @override
@@ -94,6 +106,8 @@ class _HeaderBlock extends StatelessWidget {
         textAlign: TextAlign.center,
         multiline: true,
         displayBuilder: _inlineRenderer,
+        isReadOnly: isExportMode,
+        showPlaceholderWhenEmpty: !isExportMode,
         textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
               color: const Color(0xFF202122),
               fontWeight: FontWeight.w700,
@@ -111,10 +125,12 @@ class _MediaBlock extends StatelessWidget {
     String? size,
     String? upright,
   }) onUpdate;
+  final bool isExportMode;
 
   const _MediaBlock({
     required this.section,
     required this.onUpdate,
+    required this.isExportMode,
   });
 
   @override
@@ -143,20 +159,22 @@ class _MediaBlock extends StatelessWidget {
                       fit: BoxFit.cover,
                       width: double.infinity,
                       errorBuilder: (context, error, stackTrace) {
-                        return _imagePlaceholder(context);
+                        return _imagePlaceholder(context, showText: !isExportMode);
                       },
                     ),
                   )
-                : _imagePlaceholder(context),
+                : _imagePlaceholder(context, showText: !isExportMode),
           ),
           const SizedBox(height: 6),
-          EditableValue(
-            value: imageUrl,
-            onCommit: (value) => onUpdate(imageUrl: value),
-            placeholder: 'Image URL',
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 4),
+          if (!isExportMode) ...[
+            EditableValue(
+              value: imageUrl,
+              onCommit: (value) => onUpdate(imageUrl: value),
+              placeholder: 'Image URL',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+          ],
           EditableValue(
             value: section.caption ?? '',
             onCommit: (value) => onUpdate(caption: value),
@@ -164,6 +182,8 @@ class _MediaBlock extends StatelessWidget {
             textAlign: TextAlign.center,
             multiline: true,
             displayBuilder: _inlineRenderer,
+            isReadOnly: isExportMode,
+            showPlaceholderWhenEmpty: !isExportMode,
             textStyle: Theme.of(context).textTheme.bodySmall,
           ),
         ],
@@ -171,7 +191,10 @@ class _MediaBlock extends StatelessWidget {
     );
   }
 
-  Widget _imagePlaceholder(BuildContext context) {
+  Widget _imagePlaceholder(BuildContext context, {required bool showText}) {
+    if (!showText) {
+      return const SizedBox.expand();
+    }
     return Center(
       child: Text(
         'Tap to add image',
@@ -188,11 +211,13 @@ class _SingleFieldRow extends StatelessWidget {
   final SingleFieldSection section;
   final void Function(String sectionId, String value) onChanged;
   final void Function(String sectionId) onClear;
+  final bool isExportMode;
 
   const _SingleFieldRow({
     required this.section,
     required this.onChanged,
     required this.onClear,
+    required this.isExportMode,
   });
 
   @override
@@ -201,7 +226,7 @@ class _SingleFieldRow extends StatelessWidget {
     return _BattleBoxRow(
       label: section.label,
       onAdd: () => onChanged(section.id, ''),
-      showAdd: value.trim().isEmpty,
+      showAdd: !isExportMode && value.trim().isEmpty,
       child: Row(
         children: [
           Expanded(
@@ -211,9 +236,11 @@ class _SingleFieldRow extends StatelessWidget {
               placeholder: 'tap to edit',
               multiline: true,
               displayBuilder: _inlineRenderer,
+              isReadOnly: isExportMode,
+              showPlaceholderWhenEmpty: !isExportMode,
             ),
           ),
-          if (value.trim().isNotEmpty)
+          if (!isExportMode && value.trim().isNotEmpty)
             _IconButton(
               icon: Icons.delete_outline,
               tooltip: 'Clear',
@@ -230,12 +257,14 @@ class _ListFieldRow extends StatelessWidget {
   final void Function(String sectionId) onAdd;
   final void Function(String sectionId, int index, String value) onChanged;
   final void Function(String sectionId, int index) onDelete;
+  final bool isExportMode;
 
   const _ListFieldRow({
     required this.section,
     required this.onAdd,
     required this.onChanged,
     required this.onDelete,
+    required this.isExportMode,
   });
 
   @override
@@ -243,7 +272,7 @@ class _ListFieldRow extends StatelessWidget {
     return _BattleBoxRow(
       label: section.label,
       onAdd: () => onAdd(section.id),
-      showAdd: true,
+      showAdd: !isExportMode,
       child: Column(
         children: [
           for (var i = 0; i < section.items.length; i++)
@@ -258,13 +287,16 @@ class _ListFieldRow extends StatelessWidget {
                       placeholder: 'tap to edit',
                       multiline: true,
                       displayBuilder: _inlineRenderer,
+                      isReadOnly: isExportMode,
+                      showPlaceholderWhenEmpty: !isExportMode,
                     ),
                   ),
-                  _IconButton(
-                    icon: Icons.close,
-                    tooltip: 'Delete item',
-                    onPressed: () => onDelete(section.id, i),
-                  ),
+                  if (!isExportMode)
+                    _IconButton(
+                      icon: Icons.close,
+                      tooltip: 'Delete item',
+                      onPressed: () => onDelete(section.id, i),
+                    ),
                 ],
               ),
             ),
@@ -280,6 +312,7 @@ class _MultiColumnBlock extends StatelessWidget {
   final void Function(int index) onDeleteColumn;
   final void Function(String sectionId, int columnIndex, String value) onChanged;
   final bool showAddColumn;
+  final bool isExportMode;
 
   const _MultiColumnBlock({
     required this.section,
@@ -287,6 +320,7 @@ class _MultiColumnBlock extends StatelessWidget {
     required this.onDeleteColumn,
     required this.onChanged,
     required this.showAddColumn,
+    required this.isExportMode,
   });
 
   @override
@@ -318,7 +352,7 @@ class _MultiColumnBlock extends StatelessWidget {
                       textAlign: TextAlign.center,
                     ),
                   ),
-                  if (showAddColumn)
+                  if (showAddColumn && !isExportMode)
                     Align(
                       alignment: Alignment.centerRight,
                       child: _IconButton(
@@ -348,35 +382,36 @@ class _MultiColumnBlock extends StatelessWidget {
                     ),
                     child: Column(
                       children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 6,
-                          ),
-                          color: _infoboxColumnHeaderBackground,
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  section.columns[i].label,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodySmall
-                                      ?.copyWith(
-                                        fontWeight: FontWeight.w600,
-                                        color: const Color(0xFF202122),
-                                      ),
-                                  textAlign: TextAlign.center,
+                        if (!isExportMode)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
+                            ),
+                            color: _infoboxColumnHeaderBackground,
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    section.columns[i].label,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                          color: const Color(0xFF202122),
+                                        ),
+                                    textAlign: TextAlign.center,
+                                  ),
                                 ),
-                              ),
-                              _IconButton(
-                                icon: Icons.delete_outline,
-                                tooltip: 'Delete column',
-                                onPressed: () => onDeleteColumn(i),
-                              ),
-                            ],
+                                _IconButton(
+                                  icon: Icons.delete_outline,
+                                  tooltip: 'Delete column',
+                                  onPressed: () => onDeleteColumn(i),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
                         Padding(
                           padding: const EdgeInsets.all(8),
                           child: EditableValue(
@@ -386,6 +421,8 @@ class _MultiColumnBlock extends StatelessWidget {
                             multiline: true,
                             placeholder: 'tap to edit',
                             displayBuilder: _inlineRenderer,
+                            isReadOnly: isExportMode,
+                            showPlaceholderWhenEmpty: !isExportMode,
                           ),
                         ),
                       ],
