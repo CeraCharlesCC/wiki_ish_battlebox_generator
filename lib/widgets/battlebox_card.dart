@@ -6,6 +6,13 @@ import '../state/battlebox_controller.dart';
 import 'editable_value.dart';
 import 'wikitext_inline_renderer.dart';
 
+const _infoboxBorder = Color(0xFFA2A9B1);
+const _infoboxBackground = Color(0xFFF8F9FA);
+const _infoboxHeaderBackground = Color(0xFFD8E4F2);
+const _infoboxLabelBackground = Color(0xFFEAECF0);
+const _infoboxColumnHeaderBackground = Color(0xFFF2F4F7);
+const _infoboxIconColor = Color(0xFF54595D);
+
 class BattleBoxCard extends ConsumerWidget {
   const BattleBoxCard({super.key});
 
@@ -18,18 +25,12 @@ class BattleBoxCard extends ConsumerWidget {
       constraints: const BoxConstraints(maxWidth: 380, minWidth: 320),
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFFF8F9FA),
-          border: Border.all(color: const Color(0xFF8A9AA9)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
-            ),
-          ],
+          color: _infoboxBackground,
+          border: Border.all(color: _infoboxBorder),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _HeaderBlock(
               title: doc.title,
@@ -82,19 +83,22 @@ class _HeaderBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      color: const Color(0xFF2F4457),
-        child: EditableValue(
-          value: title,
-          onCommit: onTitleChanged,
-          placeholder: 'Conflict title',
-          textAlign: TextAlign.center,
-          multiline: true,
-          displayBuilder: _inlineRenderer,
-          textStyle: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-        ),
+      decoration: const BoxDecoration(
+        color: _infoboxHeaderBackground,
+        border: Border(bottom: BorderSide(color: _infoboxBorder)),
+      ),
+      child: EditableValue(
+        value: title,
+        onCommit: onTitleChanged,
+        placeholder: 'Conflict title',
+        textAlign: TextAlign.center,
+        multiline: true,
+        displayBuilder: _inlineRenderer,
+        textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: const Color(0xFF202122),
+              fontWeight: FontWeight.w700,
+            ),
+      ),
     );
   }
 }
@@ -121,16 +125,16 @@ class _MediaBlock extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFCED7DE))),
-        color: Color(0xFFF2F4F7),
+        border: Border(bottom: BorderSide(color: _infoboxBorder)),
+        color: _infoboxBackground,
       ),
       child: Column(
         children: [
           Container(
             height: 170,
             decoration: BoxDecoration(
-              color: const Color(0xFFE2E7EC),
-              border: Border.all(color: const Color(0xFFCCD6DD)),
+              color: Colors.white,
+              border: Border.all(color: _infoboxBorder),
             ),
             child: hasImage
                 ? ClipRRect(
@@ -174,7 +178,7 @@ class _MediaBlock extends StatelessWidget {
         style: Theme.of(context)
             .textTheme
             .bodySmall
-            ?.copyWith(color: const Color(0xFF556B7D)),
+            ?.copyWith(color: const Color(0xFF6C7278)),
       ),
     );
   }
@@ -289,32 +293,42 @@ class _MultiColumnBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFCED7DE))),
+        border: Border(bottom: BorderSide(color: _infoboxBorder)),
       ),
       child: Column(
         children: [
           Container(
-            color: const Color(0xFF3B5268),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    section.label,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
+            decoration: const BoxDecoration(
+              color: _infoboxHeaderBackground,
+              border: Border(bottom: BorderSide(color: _infoboxBorder)),
+            ),
+            child: SizedBox(
+              height: 24,
+              child: Stack(
+                children: [
+                  Align(
+                    alignment: Alignment.center,
+                    child: Text(
+                      section.label,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            color: const Color(0xFF202122),
+                            fontWeight: FontWeight.w700,
+                          ),
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                ),
-                if (showAddColumn)
-                  _IconButton(
-                    icon: Icons.add_circle_outline,
-                    tooltip: 'Add belligerent',
-                    onPressed: onAddColumn,
-                    color: Colors.white,
-                  ),
-              ],
+                  if (showAddColumn)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: _IconButton(
+                        icon: Icons.add_circle_outline,
+                        tooltip: 'Add belligerent',
+                        onPressed: onAddColumn,
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
           Row(
@@ -328,7 +342,7 @@ class _MultiColumnBlock extends StatelessWidget {
                         right: BorderSide(
                           color: i == section.columns.length - 1
                               ? Colors.transparent
-                              : const Color(0xFFCED7DE),
+                              : _infoboxBorder,
                         ),
                       ),
                     ),
@@ -339,7 +353,7 @@ class _MultiColumnBlock extends StatelessWidget {
                             horizontal: 8,
                             vertical: 6,
                           ),
-                          color: const Color(0xFFE8EDF2),
+                          color: _infoboxColumnHeaderBackground,
                           child: Row(
                             children: [
                               Expanded(
@@ -348,7 +362,10 @@ class _MultiColumnBlock extends StatelessWidget {
                                   style: Theme.of(context)
                                       .textTheme
                                       .bodySmall
-                                      ?.copyWith(fontWeight: FontWeight.w600),
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF202122),
+                                      ),
                                   textAlign: TextAlign.center,
                                 ),
                               ),
@@ -400,7 +417,7 @@ class _BattleBoxRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFCED7DE))),
+        border: Border(bottom: BorderSide(color: _infoboxBorder)),
       ),
       child: IntrinsicHeight(
         child: Row(
@@ -410,9 +427,9 @@ class _BattleBoxRow extends StatelessWidget {
               width: 120,
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               decoration: const BoxDecoration(
-                color: Color(0xFFE8EDF2),
+                color: _infoboxLabelBackground,
                 border: Border(
-                  right: BorderSide(color: Color(0xFFCED7DE)),
+                  right: BorderSide(color: _infoboxBorder),
                 ),
               ),
               child: Row(
@@ -422,6 +439,7 @@ class _BattleBoxRow extends StatelessWidget {
                       label,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             fontWeight: FontWeight.w600,
+                            color: const Color(0xFF202122),
                           ),
                     ),
                   ),
@@ -465,7 +483,7 @@ class _IconButton extends StatelessWidget {
     return IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
-      icon: Icon(icon, size: 18, color: color ?? const Color(0xFF405364)),
+      icon: Icon(icon, size: 18, color: color ?? _infoboxIconColor),
       splashRadius: 16,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 24, minHeight: 24),

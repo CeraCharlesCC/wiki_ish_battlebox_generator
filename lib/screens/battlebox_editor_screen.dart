@@ -6,6 +6,11 @@ import '../services/wikitext_parser.dart';
 import '../state/battlebox_controller.dart';
 import '../widgets/battlebox_card.dart';
 
+const _wikiSurface = Color(0xFFF8F9FA);
+const _wikiBorder = Color(0xFFA2A9B1);
+const _wikiText = Color(0xFF202122);
+const _wikiSubtleText = Color(0xFF54595D);
+
 class BattleBoxEditorScreen extends ConsumerStatefulWidget {
   const BattleBoxEditorScreen({super.key});
 
@@ -68,6 +73,9 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Battlebox Editor'),
+        backgroundColor: const Color(0xFFEAECF0),
+        foregroundColor: _wikiText,
+        elevation: 0,
         actions: [
           if (!isWide)
             IconButton(
@@ -164,15 +172,8 @@ class WikitextPanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFDF8F2),
-        border: Border.all(color: const Color(0xFFDAC9B8)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        color: _wikiSurface,
+        border: Border.all(color: _wikiBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -187,14 +188,14 @@ class WikitextPanel extends StatelessWidget {
                     'Wikitext',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w700,
-                          color: const Color(0xFF5A4733),
+                          color: _wikiText,
                         ),
                   ),
                 ),
                 if (isCollapsible)
                   Icon(
                     bodyVisible ? Icons.expand_less : Icons.expand_more,
-                    color: const Color(0xFF5A4733),
+                    color: _wikiSubtleText,
                   ),
               ],
             ),
@@ -214,7 +215,12 @@ class WikitextPanel extends StatelessWidget {
                     fontSize: 12,
                   ),
                   decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
+                    border: OutlineInputBorder(
+                      borderSide: BorderSide(color: _wikiBorder),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: _wikiBorder),
+                    ),
                     isDense: true,
                   ),
                 ),
@@ -258,38 +264,10 @@ class _Background extends StatelessWidget {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFFFDF3E7), Color(0xFFE7EEF7)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          colors: [Color(0xFFF7F7F7), Color(0xFFECEFF2)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
         ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            right: -80,
-            top: -60,
-            child: Container(
-              width: 220,
-              height: 220,
-              decoration: BoxDecoration(
-                color: const Color(0xFFEFDFC8).withOpacity(0.7),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-          Positioned(
-            left: -40,
-            bottom: -60,
-            child: Container(
-              width: 180,
-              height: 180,
-              decoration: BoxDecoration(
-                color: const Color(0xFFDDE7F3).withOpacity(0.8),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
