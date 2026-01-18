@@ -2,6 +2,8 @@
 ///
 /// Parses wikitext containing:
 /// - Icon macros: `{{flagicon|USA}}`
+/// - Explanatory footnotes: `{{Efn|...}}`
+/// - Plainlist bullets: `{{Plainlist| * item }}` (items on their own lines)
 /// - Internal wiki links: `[[Target]]`, `[[Target|Label]]`, `[[Page#Section|Label]]`
 /// - External links: `[https://example.com Label]`, `[https://example.com]`
 /// - Bare URLs: `https://example.com`
@@ -82,6 +84,62 @@ class InlineTextMacro extends InlineToken {
   @override
   String toString() =>
       'InlineTextMacro(templateName: "$templateName", replacement: "$replacement")';
+}
+
+/// Explanatory footnote macro like `{{Efn|Note text}}`.
+class InlineEfnMacro extends InlineToken {
+  final String noteRaw;
+  final String fallbackText;
+  final String? name;
+  final String? group;
+
+  const InlineEfnMacro({
+    required this.noteRaw,
+    required this.fallbackText,
+    this.name,
+    this.group,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is InlineEfnMacro &&
+          other.noteRaw == noteRaw &&
+          other.fallbackText == fallbackText &&
+          other.name == name &&
+          other.group == group;
+
+  @override
+  int get hashCode => Object.hash(noteRaw, fallbackText, name, group);
+
+  @override
+  String toString() =>
+      'InlineEfnMacro(noteRaw: "$noteRaw", fallbackText: "$fallbackText", name: $name, group: $group)';
+}
+
+/// Plainlist macro like `{{Plainlist| * item }}`.
+class InlinePlainlistMacro extends InlineToken {
+  final List<String> itemRaws;
+  final String fallbackText;
+
+  const InlinePlainlistMacro({
+    required this.itemRaws,
+    required this.fallbackText,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is InlinePlainlistMacro &&
+          other.fallbackText == fallbackText &&
+          _listEquals(other.itemRaws, itemRaws);
+
+  @override
+  int get hashCode => Object.hash(Object.hashAll(itemRaws), fallbackText);
+
+  @override
+  String toString() =>
+      'InlinePlainlistMacro(items: ${itemRaws.length}, fallbackText: "$fallbackText")';
 }
 
 /// Internal wiki link like `[[Target]]`, `[[Target|Label]]`, or `[[Page#Section|Label]]`.
@@ -190,7 +248,7 @@ class WikitextInlineParser {
     while (i < input.length) {
       // Priority 1: Icon macro `{{...}}`
       if (i + 1 < input.length && input[i] == '{' && input[i + 1] == '{') {
-        final closeIndex = input.indexOf('}}', i + 2);
+        final closeIndex = _findClosingTemplate(input, i + 2);
         if (closeIndex != -1) {
           flushBuffer();
           final inner = input.substring(i + 2, closeIndex);
@@ -277,13 +335,13 @@ class WikitextInlineParser {
   /// Parses a macro from the inner content (without `{{` and `}}`).
   /// Returns null if not a recognized template.
   InlineToken? _parseMacro(String content, String rawTemplate) {
-    final parts = content.split('|').map((part) => part.trim()).toList();
+    final parts = _splitTopLevelPipes(content);
     if (parts.isEmpty) {
       return null;
     }
 
-    final templateName = parts.first;
-    final templateKey = templateName.toLowerCase();
+    final templateName = parts.first.trim();
+    final templateKey = templateName.toLowerCase().trim();
 
     // Check for text substitution macros first
     const textMacros = {
@@ -293,6 +351,50 @@ class WikitextInlineParser {
       return InlineTextMacro(
         templateName: templateName,
         replacement: textMacros[templateKey]!,
+      );
+    }
+
+    if (templateKey == 'efn') {
+      final unnamed = _firstUnnamedParam(parts);
+      if (unnamed == null || unnamed.isEmpty) {
+        return null;
+      }
+      final namedParams = _namedParams(parts);
+      return InlineEfnMacro(
+        noteRaw: unnamed,
+        fallbackText: rawTemplate,
+        name: namedParams['name'],
+        group: namedParams['group'],
+      );
+    }
+
+    if (templateKey == 'plainlist') {
+      final listRaw = _firstUnnamedParam(parts);
+      if (listRaw == null || listRaw.isEmpty) {
+        return null;
+      }
+      final normalized = listRaw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+      final items = <String>[];
+      for (final line in normalized.split('\n')) {
+        final trimmed = line.trimLeft();
+        if (!trimmed.startsWith('*')) {
+          continue;
+        }
+        var item = trimmed.substring(1);
+        if (item.startsWith(' ')) {
+          item = item.substring(1);
+        }
+        if (item.trim().isEmpty) {
+          continue;
+        }
+        items.add(item);
+      }
+      if (items.isEmpty) {
+        return null;
+      }
+      return InlinePlainlistMacro(
+        itemRaws: items,
+        fallbackText: rawTemplate,
       );
     }
 
@@ -526,6 +628,137 @@ class WikitextInlineParser {
     return input.indexOf(closing, start);
   }
 
+  /// Finds the closing `}}` matching a `{{` that starts at start-2.
+  /// Returns the index of the first `}` in the closing token, or -1 if not found.
+  int _findClosingTemplate(String input, int start) {
+    var depth = 1;
+    var i = start;
+    while (i + 1 < input.length) {
+      if (input[i] == '{' && input[i + 1] == '{') {
+        depth++;
+        i += 2;
+        continue;
+      }
+      if (input[i] == '}' && input[i + 1] == '}') {
+        depth--;
+        if (depth == 0) {
+          return i;
+        }
+        i += 2;
+        continue;
+      }
+      i++;
+    }
+    return -1;
+  }
+
+  List<String> _splitTopLevelPipes(String content) {
+    final parts = <String>[];
+    final buffer = StringBuffer();
+    var templateDepth = 0;
+    var wikiLinkDepth = 0;
+    var externalLinkDepth = 0;
+    var i = 0;
+
+    while (i < content.length) {
+      final char = content[i];
+      if (i + 1 < content.length && char == '{' && content[i + 1] == '{') {
+        templateDepth++;
+        buffer.write('{{');
+        i += 2;
+        continue;
+      }
+      if (i + 1 < content.length && char == '}' && content[i + 1] == '}') {
+        if (templateDepth > 0) {
+          templateDepth--;
+        }
+        buffer.write('}}');
+        i += 2;
+        continue;
+      }
+      if (i + 1 < content.length && char == '[' && content[i + 1] == '[') {
+        wikiLinkDepth++;
+        buffer.write('[[');
+        i += 2;
+        continue;
+      }
+      if (i + 1 < content.length && char == ']' && content[i + 1] == ']') {
+        if (wikiLinkDepth > 0) {
+          wikiLinkDepth--;
+        }
+        buffer.write(']]');
+        i += 2;
+        continue;
+      }
+      if (char == '[' && (i + 1 >= content.length || content[i + 1] != '[')) {
+        if (wikiLinkDepth == 0) {
+          externalLinkDepth++;
+        }
+        buffer.write(char);
+        i++;
+        continue;
+      }
+      if (char == ']' && externalLinkDepth > 0 && wikiLinkDepth == 0) {
+        externalLinkDepth--;
+        buffer.write(char);
+        i++;
+        continue;
+      }
+
+      if (char == '|' &&
+          templateDepth == 0 &&
+          wikiLinkDepth == 0 &&
+          externalLinkDepth == 0) {
+        parts.add(buffer.toString().trim());
+        buffer.clear();
+        i++;
+        continue;
+      }
+
+      buffer.write(char);
+      i++;
+    }
+
+    parts.add(buffer.toString().trim());
+    return parts;
+  }
+
+  String? _firstUnnamedParam(List<String> parts) {
+    for (var i = 1; i < parts.length; i++) {
+      final part = parts[i];
+      if (!_isNamedParam(part)) {
+        return part.trim();
+      }
+    }
+    return null;
+  }
+
+  Map<String, String> _namedParams(List<String> parts) {
+    final params = <String, String>{};
+    for (var i = 1; i < parts.length; i++) {
+      final part = parts[i];
+      final eqIndex = part.indexOf('=');
+      if (eqIndex == -1) {
+        continue;
+      }
+      final key = part.substring(0, eqIndex).trim().toLowerCase();
+      final value = part.substring(eqIndex + 1).trim();
+      if (key.isEmpty) {
+        continue;
+      }
+      params[key] = value;
+    }
+    return params;
+  }
+
+  bool _isNamedParam(String part) {
+    final eqIndex = part.indexOf('=');
+    if (eqIndex <= 0) {
+      return false;
+    }
+    return part.substring(0, eqIndex).trim().isNotEmpty;
+  }
+
   /// Checks if a string is a valid Wikipedia language code.
   bool _isValidLangCode(String code) {
     // Common Wikipedia language codes (this is a subset, full validation
@@ -538,4 +771,16 @@ class WikitextInlineParser {
     };
     return commonLangCodes.contains(code);
   }
+}
+
+bool _listEquals(List<String> a, List<String> b) {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
 }

@@ -42,8 +42,11 @@ class ComputePrecacheRequests {
   }) {
     final requests = <PrecacheRequest>[];
 
-    void addText(String text) {
+    void addText(String text, {int depth = 0}) {
       if (text.trim().isEmpty) {
+        return;
+      }
+      if (depth > 4) {
         return;
       }
       final tokens = _parser.parse(text);
@@ -61,6 +64,12 @@ class ComputePrecacheRequests {
                 hostOverride: token.hostOverride,
               ),
             );
+          }
+        } else if (token is InlineEfnMacro) {
+          addText(token.noteRaw, depth: depth + 1);
+        } else if (token is InlinePlainlistMacro) {
+          for (final itemRaw in token.itemRaws) {
+            addText(itemRaw, depth: depth + 1);
           }
         }
       }

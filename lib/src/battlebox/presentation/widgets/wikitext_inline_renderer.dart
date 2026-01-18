@@ -32,23 +32,65 @@ class WikitextInlineRenderer extends ConsumerWidget {
     this.isInteractive = true,
   });
 
+  static const int _maxNestingDepth = 4;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final style = textStyle ?? DefaultTextStyle.of(context).style;
-    final tokens = wikitextInlineParser.parse(text);
-    final spans = <InlineSpan>[];
 
     final wikiIconGateway = ref.read(wikiIconGatewayProvider);
     final wikiLinkGateway = ref.read(wikiLinkGatewayProvider);
     final externalLinkOpener = ref.read(externalLinkOpenerProvider);
+    final spans = _buildInlineSpans(
+      context: context,
+      text: text,
+      style: style,
+      wikiIconGateway: wikiIconGateway,
+      wikiLinkGateway: wikiLinkGateway,
+      externalLinkOpener: externalLinkOpener,
+      depth: 0,
+      efnCounter: _EfnCounter(),
+    );
+
+    return RichText(
+      textAlign: textAlign,
+      text: TextSpan(style: style, children: spans),
+    );
+  }
+
+  List<InlineSpan> _buildInlineSpans({
+    required BuildContext context,
+    required String text,
+    required TextStyle style,
+    required WikiIconGateway wikiIconGateway,
+    required WikiLinkGateway wikiLinkGateway,
+    required ExternalLinkOpener externalLinkOpener,
+    required int depth,
+    required _EfnCounter efnCounter,
+  }) {
+    if (depth > _maxNestingDepth) {
+      return [TextSpan(text: text)];
+    }
+
+    final tokens = wikitextInlineParser.parse(text);
+    final spans = <InlineSpan>[];
+    var endsWithNewline = false;
+
+    void addTextSpan(String value, {TextStyle? overrideStyle}) {
+      if (value.isEmpty) {
+        return;
+      }
+      spans.add(TextSpan(text: value, style: overrideStyle));
+      endsWithNewline = value.endsWith('\n');
+    }
 
     for (final token in tokens) {
       switch (token) {
         case InlineText():
-          spans.add(TextSpan(text: token.text));
+          addTextSpan(token.text);
 
         case InlineTextMacro():
-          spans.add(TextSpan(text: token.replacement));
+          addTextSpan(token.replacement);
 
         case InlineIconMacro():
           spans.add(
@@ -61,6 +103,7 @@ class WikitextInlineRenderer extends ConsumerWidget {
               ),
             ),
           );
+          endsWithNewline = false;
 
         case InlineWikiLink():
           spans.add(
@@ -72,6 +115,7 @@ class WikitextInlineRenderer extends ConsumerWidget {
               style,
             ),
           );
+          endsWithNewline = false;
 
         case InlineExternalLink():
           spans.add(
@@ -83,6 +127,7 @@ class WikitextInlineRenderer extends ConsumerWidget {
               style,
             ),
           );
+          endsWithNewline = false;
 
         case InlineBareUrl():
           spans.add(
@@ -94,12 +139,174 @@ class WikitextInlineRenderer extends ConsumerWidget {
               style,
             ),
           );
+          endsWithNewline = false;
+
+        case InlineEfnMacro():
+          if (depth >= _maxNestingDepth) {
+            addTextSpan(token.fallbackText);
+            continue;
+          }
+          spans.add(
+            _buildEfnSpan(
+              context: context,
+              markerText: efnCounter.nextLabel(),
+              noteRaw: token.noteRaw,
+              style: style,
+              wikiIconGateway: wikiIconGateway,
+              wikiLinkGateway: wikiLinkGateway,
+              externalLinkOpener: externalLinkOpener,
+              depth: depth,
+            ),
+          );
+          endsWithNewline = false;
+
+        case InlinePlainlistMacro():
+          if (depth >= _maxNestingDepth || token.itemRaws.isEmpty) {
+            addTextSpan(token.fallbackText);
+            continue;
+          }
+          if (spans.isNotEmpty && !endsWithNewline) {
+            addTextSpan('\n');
+          }
+          spans.add(
+            WidgetSpan(
+              alignment: PlaceholderAlignment.top,
+              child: _buildPlainlistWidget(
+                context: context,
+                items: token.itemRaws,
+                style: style,
+                wikiIconGateway: wikiIconGateway,
+                wikiLinkGateway: wikiLinkGateway,
+                externalLinkOpener: externalLinkOpener,
+                depth: depth,
+                efnCounter: efnCounter,
+              ),
+            ),
+          );
+          addTextSpan('\n');
       }
     }
 
-    return RichText(
-      textAlign: textAlign,
-      text: TextSpan(style: style, children: spans),
+    return spans;
+  }
+
+  InlineSpan _buildEfnSpan({
+    required BuildContext context,
+    required String markerText,
+    required String noteRaw,
+    required TextStyle style,
+    required WikiIconGateway wikiIconGateway,
+    required WikiLinkGateway wikiLinkGateway,
+    required ExternalLinkOpener externalLinkOpener,
+    required int depth,
+  }) {
+    final fontSize = style.fontSize ?? 14;
+    final markerStyle = style.copyWith(fontSize: fontSize * 0.7, height: 1.0);
+    Widget marker = Transform.translate(
+      offset: Offset(0, -fontSize * 0.3),
+      child: Text(markerText, style: markerStyle),
+    );
+
+    if (isInteractive) {
+      marker = GestureDetector(
+        onTap: () => _showEfnNote(
+          context,
+          noteRaw,
+          style,
+          wikiIconGateway,
+          wikiLinkGateway,
+          externalLinkOpener,
+          depth: depth,
+        ),
+        child: marker,
+      );
+    }
+
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.baseline,
+      baseline: TextBaseline.alphabetic,
+      child: marker,
+    );
+  }
+
+  Widget _buildPlainlistWidget({
+    required BuildContext context,
+    required List<String> items,
+    required TextStyle style,
+    required WikiIconGateway wikiIconGateway,
+    required WikiLinkGateway wikiLinkGateway,
+    required ExternalLinkOpener externalLinkOpener,
+    required int depth,
+    required _EfnCounter efnCounter,
+  }) {
+    final fontSize = style.fontSize ?? 14;
+    final indent = fontSize * 0.6;
+
+    return Padding(
+      padding: EdgeInsets.only(left: indent),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final item in items)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('• ', style: style),
+                Flexible(
+                  child: RichText(
+                    text: TextSpan(
+                      style: style,
+                      children: _buildInlineSpans(
+                        context: context,
+                        text: item,
+                        style: style,
+                        wikiIconGateway: wikiIconGateway,
+                        wikiLinkGateway: wikiLinkGateway,
+                        externalLinkOpener: externalLinkOpener,
+                        depth: depth + 1,
+                        efnCounter: efnCounter,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showEfnNote(
+    BuildContext context,
+    String noteRaw,
+    TextStyle style,
+    WikiIconGateway wikiIconGateway,
+    WikiLinkGateway wikiLinkGateway,
+    ExternalLinkOpener externalLinkOpener, {
+    required int depth,
+  }) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final spans = _buildInlineSpans(
+          context: dialogContext,
+          text: noteRaw,
+          style: style,
+          wikiIconGateway: wikiIconGateway,
+          wikiLinkGateway: wikiLinkGateway,
+          externalLinkOpener: externalLinkOpener,
+          depth: depth + 1,
+          efnCounter: _EfnCounter(),
+        );
+        return AlertDialog(
+          title: const Text('Note'),
+          content: SingleChildScrollView(
+            child: RichText(
+              text: TextSpan(style: style, children: spans),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -169,6 +376,22 @@ class WikitextInlineRenderer extends ConsumerWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+}
+
+class _EfnCounter {
+  var _index = 0;
+
+  String nextLabel() {
+    var n = _index + 1;
+    _index++;
+    final buffer = StringBuffer();
+    while (n > 0) {
+      n -= 1;
+      buffer.writeCharCode('a'.codeUnitAt(0) + (n % 26));
+      n ~/= 26;
+    }
+    return buffer.toString().split('').reversed.join();
   }
 }
 
