@@ -21,7 +21,7 @@ import '../../infrastructure/platform/platform_image_exporter.dart';
 import '../../infrastructure/serialization/wikitext_battlebox_serializer.dart';
 import '../../infrastructure/system/url_launcher_opener.dart';
 import 'battlebox_editor_notifier.dart';
-import '../../../../services/wikitext_inline_parser.dart';
+import '../../domain/services/wikitext_inline_parser.dart';
 
 /// Provides the shared HTTP client for all network operations.
 final httpClientProvider = Provider<http.Client>((ref) {

@@ -8,9 +8,9 @@ import '../../application/ports/wiki_link_gateway.dart';
 import '../state/providers.dart';
 
 // Re-export the parser for external use
-export '../../../../services/wikitext_inline_parser.dart';
+export '../../domain/services/wikitext_inline_parser.dart';
 
-import '../../../../services/wikitext_inline_parser.dart';
+import '../../domain/services/wikitext_inline_parser.dart';
 
 /// Shared parser instance for inline wikitext.
 const wikitextInlineParser = WikitextInlineParser();

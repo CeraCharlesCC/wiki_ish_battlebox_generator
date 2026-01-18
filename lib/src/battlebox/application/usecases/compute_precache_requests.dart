@@ -1,6 +1,6 @@
 import '../../domain/entities/battlebox_doc.dart';
 import '../../domain/entities/sections.dart';
-import '../../../../services/wikitext_inline_parser.dart';
+import '../../domain/services/wikitext_inline_parser.dart';
 
 /// Base type for precache requests derived from a battlebox document.
 sealed class PrecacheRequest {
