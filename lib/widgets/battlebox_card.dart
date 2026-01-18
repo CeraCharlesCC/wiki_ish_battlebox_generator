@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/battlebox_models.dart';
-import '../state/battlebox_controller.dart';
+import '../src/battlebox/domain/entities/sections.dart';
+import '../src/battlebox/presentation/state/providers.dart';
 import 'editable_value.dart';
-import 'wikitext_inline_renderer.dart';
+import '../src/battlebox/presentation/widgets/wikitext_inline_renderer.dart';
 
 const _infoboxBorder = Color(0xFFA2A9B1);
 const _infoboxBackground = Color(0xFFF8F9FA);
@@ -23,8 +23,8 @@ class BattleBoxCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final doc = ref.watch(battleBoxProvider);
-    final controller = ref.read(battleBoxProvider.notifier);
+    final doc = ref.watch(battleboxEditorNotifierProvider);
+    final controller = ref.read(battleboxEditorNotifierProvider.notifier);
 
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 380, minWidth: 320),

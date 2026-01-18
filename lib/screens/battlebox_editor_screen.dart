@@ -5,13 +5,9 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/battlebox_models.dart';
-import '../services/image_exporter.dart';
-import '../services/wikitext_inline_parser.dart';
-import '../services/wikitext_parser.dart';
-import '../state/battlebox_controller.dart';
+import '../src/battlebox/application/usecases/compute_precache_requests.dart';
+import '../src/battlebox/presentation/state/providers.dart';
 import '../widgets/battlebox_card.dart';
-import '../widgets/wikitext_inline_renderer.dart';
 
 const _wikiSurface = Color(0xFFF8F9FA);
 const _wikiBorder = Color(0xFFA2A9B1);
@@ -28,7 +24,6 @@ class BattleBoxEditorScreen extends ConsumerStatefulWidget {
 
 class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
   late final TextEditingController _wikitextController;
-  final WikitextParser _parser = WikitextParser();
   final GlobalKey _battleBoxKey = GlobalKey();
   bool _showPanel = true;
   bool _isExporting = false;
@@ -36,8 +31,9 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
   @override
   void initState() {
     super.initState();
-    final doc = ref.read(battleBoxProvider);
-    _wikitextController = TextEditingController(text: _parser.export(doc));
+    final notifier = ref.read(battleboxEditorNotifierProvider.notifier);
+    _wikitextController =
+        TextEditingController(text: notifier.exportWikitext());
   }
 
   @override
@@ -47,13 +43,15 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
   }
 
   void _importWikitext() {
-    final doc = _parser.parse(_wikitextController.text);
-    ref.read(battleBoxProvider.notifier).replaceDoc(doc);
+    ref
+        .read(battleboxEditorNotifierProvider.notifier)
+        .importWikitext(_wikitextController.text);
   }
 
   void _exportWikitext() {
-    final doc = ref.read(battleBoxProvider);
-    _wikitextController.text = _parser.export(doc);
+    final wikitext =
+        ref.read(battleboxEditorNotifierProvider.notifier).exportWikitext();
+    _wikitextController.text = wikitext;
   }
 
   Future<void> _copyWikitext() async {
@@ -116,7 +114,8 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
         }
         return;
       }
-      final savedPath = await exportPng(
+      final exporter = ref.read(imageExporterProvider);
+      final savedPath = await exporter.exportPng(
         byteData.buffer.asUint8List(),
         filename: 'battlebox.png',
       );
@@ -166,68 +165,32 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
   Future<void> _precacheAllImages() async {
     if (!mounted) return;
 
-    final doc = ref.read(battleBoxProvider);
-    final resolver = ref.read(wikiIconResolverProvider);
+    final doc = ref.read(battleboxEditorNotifierProvider);
+    final gateway = ref.read(wikiIconGatewayProvider);
+    final computePrecache = ref.read(computePrecacheRequestsProvider);
     final dpr = MediaQuery.of(context).devicePixelRatio;
     final fontSizes = _candidateFontSizes(context);
 
+    final requests = computePrecache(
+      doc: doc,
+      fontSizes: fontSizes,
+      devicePixelRatio: dpr,
+    );
+
     final imageUrls = <Future<String?>>[];
-
-    // Collect all text content that may contain flag macros
-    final allTexts = <String>[];
-    allTexts.add(doc.title);
-
-    for (final section in doc.sections) {
-      if (!section.isVisible) continue;
-
-      switch (section) {
-        case MediaSection section:
-          final url = section.imageUrl;
-          if (url != null && url.trim().isNotEmpty) {
-            // Directly add media URL for precaching
-            imageUrls.add(Future.value(url));
-          }
-          if (section.caption != null) {
-            allTexts.add(section.caption!);
-          }
-        case SingleFieldSection section:
-          if (section.value != null) {
-            allTexts.add(section.value!.raw);
-          }
-        case ListFieldSection section:
-          for (final item in section.items) {
-            allTexts.add(item.raw);
-          }
-        case MultiColumnSection section:
-          for (final column in section.cells) {
-            for (final cell in column) {
-              allTexts.add(cell.raw);
-            }
-          }
-      }
-    }
-
-    // Parse flag macros from all text using the shared parser and resolve their URLs
-    for (final text in allTexts) {
-      final tokens = wikitextInlineParser.parse(text);
-      for (final token in tokens) {
-        if (token is InlineIconMacro) {
-          // IMPORTANT: precache for the same size(s) the UI will request.
-          // Otherwise the resolver cache key won't match and the export will
-          // capture the grey loading placeholder.
-          for (final fontSize in fontSizes) {
-            final height = fontSize + 2;
-            final width = height * 1.4;
-            final widthPx = (width * dpr).round();
-
-            imageUrls.add(resolver.resolveFlagIcon(
-              templateName: token.templateName,
-              code: token.code,
-              widthPx: widthPx,
-              hostOverride: token.hostOverride,
-            ));
-          }
-        }
+    for (final request in requests) {
+      switch (request) {
+        case DirectUrlRequest request:
+          imageUrls.add(Future.value(request.url));
+        case FlagIconRequest request:
+          imageUrls.add(
+            gateway.resolveFlagIcon(
+              templateName: request.templateName,
+              code: request.code,
+              widthPx: request.widthPx,
+              hostOverride: request.hostOverride,
+            ),
+          );
       }
     }
 
