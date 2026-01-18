@@ -1,7 +1,11 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/wiki_icon_resolver.dart';
+import '../services/wiki_link_resolver.dart';
+import '../services/wikitext_inline_parser.dart';
 
 final wikiIconResolverProvider = Provider<WikiIconResolver>((ref) {
   final resolver = WikiIconResolver();
@@ -9,37 +13,84 @@ final wikiIconResolverProvider = Provider<WikiIconResolver>((ref) {
   return resolver;
 });
 
+final wikiLinkResolverProvider = Provider<WikiLinkResolver>((ref) {
+  final resolver = WikiLinkResolver();
+  ref.onDispose(resolver.dispose);
+  return resolver;
+});
+
+/// Shared parser instance for inline wikitext.
+const wikitextInlineParser = WikitextInlineParser();
+
 class WikitextInlineRenderer extends ConsumerWidget {
   final String text;
   final TextStyle? textStyle;
   final TextAlign textAlign;
+
+  /// Whether links should be interactive (clickable).
+  /// Set to false during export mode to prevent gestures.
+  final bool isInteractive;
 
   const WikitextInlineRenderer({
     super.key,
     required this.text,
     this.textStyle,
     this.textAlign = TextAlign.start,
+    this.isInteractive = true,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final style = textStyle ?? DefaultTextStyle.of(context).style;
-    final segments = _parseSegments(text);
+    final tokens = wikitextInlineParser.parse(text);
     final spans = <InlineSpan>[];
-    for (final segment in segments) {
-      if (segment is _TextSegment) {
-        spans.add(TextSpan(text: segment.text));
-      } else if (segment is _IconSegment) {
-        spans.add(
-          WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: _IconSpan(
-              resolver: ref.read(wikiIconResolverProvider),
-              macro: segment.macro,
-              style: style,
+
+    for (final token in tokens) {
+      switch (token) {
+        case InlineText():
+          spans.add(TextSpan(text: token.text));
+
+        case InlineIconMacro():
+          spans.add(
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: _IconSpan(
+                resolver: ref.read(wikiIconResolverProvider),
+                macro: token,
+                style: style,
+              ),
             ),
-          ),
-        );
+          );
+
+        case InlineWikiLink():
+          spans.add(
+            _buildWikiLinkSpan(
+              context,
+              ref,
+              token,
+              style,
+            ),
+          );
+
+        case InlineExternalLink():
+          spans.add(
+            _buildExternalLinkSpan(
+              context,
+              token.uri,
+              token.displayText,
+              style,
+            ),
+          );
+
+        case InlineBareUrl():
+          spans.add(
+            _buildExternalLinkSpan(
+              context,
+              token.uri,
+              token.uri.toString(),
+              style,
+            ),
+          );
       }
     }
 
@@ -48,11 +99,111 @@ class WikitextInlineRenderer extends ConsumerWidget {
       text: TextSpan(style: style, children: spans),
     );
   }
+
+  InlineSpan _buildWikiLinkSpan(
+    BuildContext context,
+    WidgetRef ref,
+    InlineWikiLink link,
+    TextStyle style,
+  ) {
+    final linkStyle = style.copyWith(
+      color: const Color(0xFF0645AD), // Wikipedia blue
+      decoration: TextDecoration.underline,
+      decorationColor: const Color(0xFF0645AD),
+    );
+
+    if (!isInteractive) {
+      return TextSpan(text: link.displayText, style: linkStyle);
+    }
+
+    return TextSpan(
+      text: link.displayText,
+      style: linkStyle,
+      recognizer: TapGestureRecognizer()
+        ..onTap = () => _onWikiLinkTap(context, ref, link),
+    );
+  }
+
+  InlineSpan _buildExternalLinkSpan(
+    BuildContext context,
+    Uri uri,
+    String displayText,
+    TextStyle style,
+  ) {
+    final linkStyle = style.copyWith(
+      color: const Color(0xFF3366CC), // External link blue
+      decoration: TextDecoration.underline,
+      decorationColor: const Color(0xFF3366CC),
+    );
+
+    if (!isInteractive) {
+      return TextSpan(text: displayText, style: linkStyle);
+    }
+
+    return TextSpan(
+      text: displayText,
+      style: linkStyle,
+      recognizer: TapGestureRecognizer()
+        ..onTap = () => _onExternalLinkTap(context, uri),
+    );
+  }
+
+  Future<void> _onWikiLinkTap(
+    BuildContext context,
+    WidgetRef ref,
+    InlineWikiLink link,
+  ) async {
+    final resolver = ref.read(wikiLinkResolverProvider);
+
+    // For Milestone 1: Use naive URL generation (fast, no API call)
+    // For Milestone 2: Use full resolution with probing
+    final url = resolver.buildNaiveUrl(
+      rawTarget: link.rawTarget,
+      fragment: link.fragment,
+      langPrefix: link.langPrefix,
+    );
+
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      _showError(context, 'Could not resolve link.');
+      return;
+    }
+
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && context.mounted) {
+        _showError(context, 'Could not open link.');
+      }
+    } catch (_) {
+      if (context.mounted) {
+        _showError(context, 'Could not open link.');
+      }
+    }
+  }
+
+  Future<void> _onExternalLinkTap(BuildContext context, Uri uri) async {
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && context.mounted) {
+        _showError(context, 'Could not open link.');
+      }
+    } catch (_) {
+      if (context.mounted) {
+        _showError(context, 'Could not open link.');
+      }
+    }
+  }
+
+  void _showError(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 }
 
 class _IconSpan extends StatelessWidget {
   final WikiIconResolver resolver;
-  final _IconMacro macro;
+  final InlineIconMacro macro;
   final TextStyle style;
 
   const _IconSpan({
@@ -85,9 +236,8 @@ class _IconSpan extends StatelessWidget {
             width: width,
             height: height,
             fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) {
-              return _fallbackText(style, macro.fallbackText);
-            },
+            errorBuilder: (context, error, stackTrace) =>
+                _fallbackText(style, macro.fallbackText),
           );
         }
         if (snapshot.hasError) {
@@ -98,7 +248,7 @@ class _IconSpan extends StatelessWidget {
           height: height,
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -113,98 +263,4 @@ class _IconSpan extends StatelessWidget {
       style: style,
     );
   }
-}
-
-sealed class _Segment {
-  const _Segment();
-}
-
-class _TextSegment extends _Segment {
-  final String text;
-
-  const _TextSegment(this.text);
-}
-
-class _IconSegment extends _Segment {
-  final _IconMacro macro;
-
-  const _IconSegment(this.macro);
-}
-
-class _IconMacro {
-  final String templateName;
-  final String code;
-  final String? hostOverride;
-  final String fallbackText;
-
-  const _IconMacro({
-    required this.templateName,
-    required this.code,
-    required this.hostOverride,
-    required this.fallbackText,
-  });
-}
-
-List<_Segment> _parseSegments(String input) {
-  final regex = RegExp(r'\{\{([^{}]+)\}\}');
-  final segments = <_Segment>[];
-  var lastIndex = 0;
-  for (final match in regex.allMatches(input)) {
-    if (match.start > lastIndex) {
-      segments.add(_TextSegment(input.substring(lastIndex, match.start)));
-    }
-    final raw = match.group(0) ?? '';
-    final inner = match.group(1) ?? '';
-    final macro = _parseIconMacro(inner, raw);
-    if (macro == null) {
-      segments.add(_TextSegment(raw));
-    } else {
-      segments.add(_IconSegment(macro));
-    }
-    lastIndex = match.end;
-  }
-  if (lastIndex < input.length) {
-    segments.add(_TextSegment(input.substring(lastIndex)));
-  }
-  if (segments.isEmpty) {
-    segments.add(_TextSegment(input));
-  }
-  return segments;
-}
-
-_IconMacro? _parseIconMacro(String content, String rawTemplate) {
-  final parts = content.split('|').map((part) => part.trim()).toList();
-  if (parts.isEmpty) {
-    return null;
-  }
-  final templateName = parts.first;
-  final templateKey = templateName.toLowerCase();
-  if (templateKey != 'flagicon' && templateKey != 'flag icon') {
-    return null;
-  }
-  String? code;
-  String? hostOverride;
-  for (var i = 1; i < parts.length; i++) {
-    final part = parts[i];
-    if (part.isEmpty) {
-      continue;
-    }
-    final eqIndex = part.indexOf('=');
-    if (eqIndex != -1) {
-      final key = part.substring(0, eqIndex).trim().toLowerCase();
-      final value = part.substring(eqIndex + 1).trim();
-      if (key == 'host' || key == 'wiki') {
-        hostOverride = value;
-      }
-    } else code ??= part;
-  }
-  if (code == null || code.isEmpty) {
-    return null;
-  }
-  return _IconMacro(
-    templateName: templateName,
-    code: code,
-    hostOverride: hostOverride,
-    fallbackText: rawTemplate,
-  );
 }

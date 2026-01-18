@@ -4,8 +4,8 @@ import '../models/battlebox_models.dart';
 
 final battleBoxProvider =
     StateNotifierProvider<BattleBoxController, BattleBoxDoc>(
-  (ref) => BattleBoxController(),
-);
+      (ref) => BattleBoxController(),
+    );
 
 class BattleBoxController extends StateNotifier<BattleBoxDoc> {
   BattleBoxController() : super(BattleBoxDoc.seed());
@@ -74,11 +74,7 @@ class BattleBoxController extends StateNotifier<BattleBoxDoc> {
     _replaceSection(sectionId, updated);
   }
 
-  void updateMultiColumnCell(
-    String sectionId,
-    int columnIndex,
-    String value,
-  ) {
+  void updateMultiColumnCell(String sectionId, int columnIndex, String value) {
     final section = state.sectionById(sectionId);
     if (section is! MultiColumnSection) {
       return;
@@ -96,15 +92,14 @@ class BattleBoxController extends StateNotifier<BattleBoxDoc> {
     final sections = <SectionModel>[];
     for (final section in state.sections) {
       if (section is MultiColumnSection) {
-        final columns = [...section.columns]
-          ..add(
-            ColumnModel(
-              id: DateTime.now().microsecondsSinceEpoch.toString(),
-              label: 'Belligerent ${section.columns.length + 1}',
-            ),
-          );
-        final cells = _copyCells(section.cells)
-          ..add([const RichTextValue('')]);
+        final columns = [
+          ...section.columns,
+          ColumnModel(
+            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            label: 'Belligerent ${section.columns.length + 1}',
+          ),
+        ];
+        final cells = _copyCells(section.cells)..add([const RichTextValue('')]);
         sections.add(section.copyWith(columns: columns, cells: cells));
       } else {
         sections.add(section);
@@ -114,7 +109,9 @@ class BattleBoxController extends StateNotifier<BattleBoxDoc> {
   }
 
   void deleteBelligerentColumn(int index) {
-    final firstMulti = state.sections.whereType<MultiColumnSection>().firstOrNull;
+    final firstMulti = state.sections
+        .whereType<MultiColumnSection>()
+        .firstOrNull;
     if (firstMulti == null || firstMulti.columns.length <= 1) {
       return;
     }

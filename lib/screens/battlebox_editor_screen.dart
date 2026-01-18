@@ -1,13 +1,13 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/battlebox_models.dart';
 import '../services/image_exporter.dart';
+import '../services/wikitext_inline_parser.dart';
 import '../services/wikitext_parser.dart';
 import '../state/battlebox_controller.dart';
 import '../widgets/battlebox_card.dart';
@@ -207,13 +207,11 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
       }
     }
 
-    // Parse flag macros from all text and resolve their URLs
-    final flagMacroPattern = RegExp(r'\{\{([^{}]+)\}\}');
+    // Parse flag macros from all text using the shared parser and resolve their URLs
     for (final text in allTexts) {
-      for (final match in flagMacroPattern.allMatches(text)) {
-        final inner = match.group(1) ?? '';
-        final macro = _parseFlagMacro(inner);
-        if (macro != null) {
+      final tokens = wikitextInlineParser.parse(text);
+      for (final token in tokens) {
+        if (token is InlineIconMacro) {
           // IMPORTANT: precache for the same size(s) the UI will request.
           // Otherwise the resolver cache key won't match and the export will
           // capture the grey loading placeholder.
@@ -223,10 +221,10 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
             final widthPx = (width * dpr).round();
 
             imageUrls.add(resolver.resolveFlagIcon(
-              templateName: macro.templateName,
-              code: macro.code,
+              templateName: token.templateName,
+              code: token.code,
               widthPx: widthPx,
-              hostOverride: macro.hostOverride,
+              hostOverride: token.hostOverride,
             ));
           }
         }
@@ -246,43 +244,6 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
     }
 
     await Future.wait(precacheFutures);
-  }
-
-  _FlagMacro? _parseFlagMacro(String content) {
-    final parts = content.split('|').map((p) => p.trim()).toList();
-    if (parts.isEmpty) return null;
-
-    final templateName = parts.first;
-    final templateKey = templateName.toLowerCase();
-    if (templateKey != 'flagicon' && templateKey != 'flag icon') {
-      return null;
-    }
-
-    String? code;
-    String? hostOverride;
-    for (var i = 1; i < parts.length; i++) {
-      final part = parts[i];
-      if (part.isEmpty) continue;
-
-      final eqIndex = part.indexOf('=');
-      if (eqIndex != -1) {
-        final key = part.substring(0, eqIndex).trim().toLowerCase();
-        final value = part.substring(eqIndex + 1).trim();
-        if (key == 'host' || key == 'wiki') {
-          hostOverride = value;
-        }
-      } else {
-        code ??= part;
-      }
-    }
-
-    if (code == null || code.isEmpty) return null;
-
-    return _FlagMacro(
-      templateName: templateName,
-      code: code,
-      hostOverride: hostOverride,
-    );
   }
 
   @override
@@ -516,16 +477,4 @@ class _Background extends StatelessWidget {
       ),
     );
   }
-}
-
-class _FlagMacro {
-  final String templateName;
-  final String code;
-  final String? hostOverride;
-
-  const _FlagMacro({
-    required this.templateName,
-    required this.code,
-    this.hostOverride,
-  });
 }

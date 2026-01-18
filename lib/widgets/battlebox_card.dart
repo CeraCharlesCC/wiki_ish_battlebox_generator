@@ -533,10 +533,12 @@ Widget _inlineRenderer(
   String value,
   TextStyle? style,
   TextAlign align,
+  bool isInteractive,
 ) {
   return WikitextInlineRenderer(
     text: value,
     textStyle: style,
     textAlign: align,
+    isInteractive: isInteractive,
   );
 }

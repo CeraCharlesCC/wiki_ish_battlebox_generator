@@ -15,6 +15,7 @@ class EditableValue extends StatefulWidget {
     String value,
     TextStyle? style,
     TextAlign align,
+    bool isInteractive,
   )? displayBuilder;
 
   const EditableValue({
@@ -165,6 +166,7 @@ class _EditableValueState extends State<EditableValue> {
                 widget.value,
                 displayStyle,
                 widget.textAlign,
+                !widget.isReadOnly,
               );
 
     final content = Padding(
