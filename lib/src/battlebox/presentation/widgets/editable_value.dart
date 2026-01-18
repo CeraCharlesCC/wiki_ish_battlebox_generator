@@ -130,7 +130,7 @@ class _EditableValueState extends State<EditableValue> {
         child: TextField(
           controller: _controller,
           autofocus: true,
-          maxLines: widget.multiline ? 6 : 1,
+          maxLines: widget.multiline ? null : 1,
           minLines: widget.multiline ? 1 : 1,
           textAlign: widget.textAlign,
           style: textStyle,

@@ -47,6 +47,9 @@ class WikitextInlineRenderer extends ConsumerWidget {
         case InlineText():
           spans.add(TextSpan(text: token.text));
 
+        case InlineTextMacro():
+          spans.add(TextSpan(text: token.replacement));
+
         case InlineIconMacro():
           spans.add(
             WidgetSpan(

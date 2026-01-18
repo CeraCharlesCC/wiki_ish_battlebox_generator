@@ -59,6 +59,31 @@ class InlineIconMacro extends InlineToken {
       'InlineIconMacro(templateName: "$templateName", code: "$code", hostOverride: $hostOverride)';
 }
 
+/// Simple text substitution macro like `{{KIA}}` that maps to a replacement string.
+class InlineTextMacro extends InlineToken {
+  final String templateName;
+  final String replacement;
+
+  const InlineTextMacro({
+    required this.templateName,
+    required this.replacement,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is InlineTextMacro &&
+          other.templateName == templateName &&
+          other.replacement == replacement;
+
+  @override
+  int get hashCode => Object.hash(templateName, replacement);
+
+  @override
+  String toString() =>
+      'InlineTextMacro(templateName: "$templateName", replacement: "$replacement")';
+}
+
 /// Internal wiki link like `[[Target]]`, `[[Target|Label]]`, or `[[Page#Section|Label]]`.
 class InlineWikiLink extends InlineToken {
   /// The target page (e.g., "ジュノー・ビーチの戦い" or "Page#Section").
@@ -170,7 +195,7 @@ class WikitextInlineParser {
           flushBuffer();
           final inner = input.substring(i + 2, closeIndex);
           final rawTemplate = input.substring(i, closeIndex + 2);
-          final macro = _parseIconMacro(inner, rawTemplate);
+          final macro = _parseMacro(inner, rawTemplate);
           if (macro != null) {
             tokens.add(macro);
           } else {
@@ -249,9 +274,9 @@ class WikitextInlineParser {
     return tokens;
   }
 
-  /// Parses an icon macro from the inner content (without `{{` and `}}`).
-  /// Returns null if not a recognized icon template.
-  InlineIconMacro? _parseIconMacro(String content, String rawTemplate) {
+  /// Parses a macro from the inner content (without `{{` and `}}`).
+  /// Returns null if not a recognized template.
+  InlineToken? _parseMacro(String content, String rawTemplate) {
     final parts = content.split('|').map((part) => part.trim()).toList();
     if (parts.isEmpty) {
       return null;
@@ -259,6 +284,17 @@ class WikitextInlineParser {
 
     final templateName = parts.first;
     final templateKey = templateName.toLowerCase();
+
+    // Check for text substitution macros first
+    const textMacros = {
+      'kia': '†',
+    };
+    if (textMacros.containsKey(templateKey) && parts.length == 1) {
+      return InlineTextMacro(
+        templateName: templateName,
+        replacement: textMacros[templateKey]!,
+      );
+    }
 
     // Only recognize flagicon/flag icon templates
     if (templateKey != 'flagicon' && templateKey != 'flag icon') {
