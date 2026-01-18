@@ -43,7 +43,8 @@ class BattleBoxCard extends ConsumerWidget {
               isExportMode: isExportMode,
             ),
             for (final section in doc.sections)
-              if (section.isVisible)
+              if (section.isVisible &&
+                  (!isExportMode || !_isSectionEmpty(section)))
                 switch (section) {
                   MediaSection section => _MediaBlock(
                       section: section,
@@ -526,6 +527,19 @@ class _IconButton extends StatelessWidget {
       constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
     );
   }
+}
+
+bool _isSectionEmpty(SectionModel section) {
+  return switch (section) {
+    MediaSection s => (s.imageUrl?.trim().isEmpty ?? true) &&
+        (s.caption?.trim().isEmpty ?? true),
+    SingleFieldSection s => s.value?.isEmpty ?? true,
+    ListFieldSection s =>
+      s.items.isEmpty || s.items.every((item) => item.isEmpty),
+    MultiColumnSection s =>
+      s.cells.every((column) => column.every((cell) => cell.isEmpty)),
+    _ => false,
+  };
 }
 
 Widget _inlineRenderer(
