@@ -106,21 +106,15 @@ class WikitextInlineRenderer extends ConsumerWidget {
     InlineWikiLink link,
     TextStyle style,
   ) {
-    final linkStyle = style.copyWith(
-      color: const Color(0xFF0645AD), // Wikipedia blue
-      decoration: TextDecoration.underline,
-      decorationColor: const Color(0xFF0645AD),
-    );
-
-    if (!isInteractive) {
-      return TextSpan(text: link.displayText, style: linkStyle);
-    }
-
-    return TextSpan(
-      text: link.displayText,
-      style: linkStyle,
-      recognizer: TapGestureRecognizer()
-        ..onTap = () => _onWikiLinkTap(context, ref, link),
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.middle,
+      child: _WikiLinkSpan(
+        resolver: ref.read(wikiLinkResolverProvider),
+        link: link,
+        style: style,
+        isInteractive: isInteractive,
+        onError: _showError,
+      ),
     );
   }
 
@@ -148,39 +142,6 @@ class WikitextInlineRenderer extends ConsumerWidget {
     );
   }
 
-  Future<void> _onWikiLinkTap(
-    BuildContext context,
-    WidgetRef ref,
-    InlineWikiLink link,
-  ) async {
-    final resolver = ref.read(wikiLinkResolverProvider);
-
-    // For Milestone 1: Use naive URL generation (fast, no API call)
-    // For Milestone 2: Use full resolution with probing
-    final url = resolver.buildNaiveUrl(
-      rawTarget: link.rawTarget,
-      fragment: link.fragment,
-      langPrefix: link.langPrefix,
-    );
-
-    final uri = Uri.tryParse(url);
-    if (uri == null) {
-      _showError(context, 'Could not resolve link.');
-      return;
-    }
-
-    try {
-      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!launched && context.mounted) {
-        _showError(context, 'Could not open link.');
-      }
-    } catch (_) {
-      if (context.mounted) {
-        _showError(context, 'Could not open link.');
-      }
-    }
-  }
-
   Future<void> _onExternalLinkTap(BuildContext context, Uri uri) async {
     try {
       final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -198,6 +159,121 @@ class WikitextInlineRenderer extends ConsumerWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+}
+
+/// Wikipedia red link color for non-existent pages.
+const _redLinkColor = Color(0xFFBA0000);
+
+/// Wikipedia blue link color for existing pages.
+const _blueLinkColor = Color(0xFF0645AD);
+
+class _WikiLinkSpan extends StatefulWidget {
+  final WikiLinkResolver resolver;
+  final InlineWikiLink link;
+  final TextStyle style;
+  final bool isInteractive;
+  final void Function(BuildContext, String) onError;
+
+  const _WikiLinkSpan({
+    required this.resolver,
+    required this.link,
+    required this.style,
+    required this.isInteractive,
+    required this.onError,
+  });
+
+  @override
+  State<_WikiLinkSpan> createState() => _WikiLinkSpanState();
+}
+
+class _WikiLinkSpanState extends State<_WikiLinkSpan> {
+  Future<ResolvedWikiLink?>? _resolveFuture;
+  bool? _exists;
+
+  @override
+  void initState() {
+    super.initState();
+    _startResolve();
+  }
+
+  @override
+  void didUpdateWidget(_WikiLinkSpan oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.link.rawTarget != widget.link.rawTarget ||
+        oldWidget.link.langPrefix != widget.link.langPrefix ||
+        oldWidget.link.fragment != widget.link.fragment) {
+      _startResolve();
+    }
+  }
+
+  void _startResolve() {
+    _resolveFuture = widget.resolver.resolve(
+      rawTarget: widget.link.rawTarget,
+      fragment: widget.link.fragment,
+      forcedLang: widget.link.langPrefix,
+    );
+    _resolveFuture!.then((result) {
+      if (mounted) {
+        setState(() {
+          _exists = result != null;
+        });
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Default to blue while loading, then update based on existence
+    final linkColor = _exists == false ? _redLinkColor : _blueLinkColor;
+    final linkStyle = widget.style.copyWith(
+      color: linkColor,
+      decoration: TextDecoration.underline,
+      decorationColor: linkColor,
+    );
+
+    if (!widget.isInteractive) {
+      return Text(widget.link.displayText, style: linkStyle);
+    }
+
+    return GestureDetector(
+      onTap: () => _onTap(context),
+      child: Text(widget.link.displayText, style: linkStyle),
+    );
+  }
+
+  Future<void> _onTap(BuildContext context) async {
+    // Try to use resolved URL if available, otherwise fallback to naive
+    final resolved = await _resolveFuture;
+    final String url;
+    if (resolved != null) {
+      url = resolved.url;
+    } else {
+      url = widget.resolver.buildNaiveUrl(
+        rawTarget: widget.link.rawTarget,
+        fragment: widget.link.fragment,
+        langPrefix: widget.link.langPrefix,
+      );
+    }
+
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      if (context.mounted) {
+        widget.onError(context, 'Could not resolve link.');
+      }
+      return;
+    }
+
+    try {
+      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched && context.mounted) {
+        widget.onError(context, 'Could not open link.');
+      }
+    } catch (_) {
+      if (context.mounted) {
+        widget.onError(context, 'Could not open link.');
+      }
+    }
   }
 }
 

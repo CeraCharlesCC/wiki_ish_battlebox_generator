@@ -375,16 +375,23 @@ class WikiLinkResolver {
   String? _detectPrimaryLanguage(String text) {
     if (text.isEmpty) return null;
 
-    var kanaKanjiCount = 0;
+    var kanaCount = 0;
     var hangulCount = 0;
     var cyrillicCount = 0;
     var arabicCount = 0;
     var hanCount = 0;
 
+    // Count only "meaningful" chars so digits like 1944 don't dilute the ratio.
+    var meaningfulTotal = 0;
+
     for (final rune in text.runes) {
-      if (_isKana(rune) || _isKanji(rune)) {
-        kanaKanjiCount++;
-        if (_isKanji(rune)) hanCount++;
+      if (_isIgnorableForLangDetect(rune)) {
+        continue;
+      }
+      meaningfulTotal++;
+
+      if (_isKana(rune)) {
+        kanaCount++;
       } else if (_isHangul(rune)) {
         hangulCount++;
       } else if (_isCyrillic(rune)) {
@@ -396,36 +403,53 @@ class WikiLinkResolver {
       }
     }
 
-    final total = text.runes.length;
-    if (total == 0) return null;
+    if (meaningfulTotal == 0) return null;
 
-    // Kana/Kanji heavy -> Japanese
-    if (kanaKanjiCount > total * 0.3) {
+    // Kana present => strongly Japanese.
+    if (kanaCount > 0) {
       return 'ja';
     }
 
-    // Hangul -> Korean
-    if (hangulCount > total * 0.3) {
+    // Hangul => Korean
+    if (hangulCount > meaningfulTotal * 0.3) {
       return 'ko';
     }
 
-    // Cyrillic -> Russian (primary), could also be Ukrainian, etc.
-    if (cyrillicCount > total * 0.3) {
+    // Cyrillic => Russian (primary)
+    if (cyrillicCount > meaningfulTotal * 0.3) {
       return 'ru';
     }
 
-    // Arabic script -> Arabic (primary)
-    if (arabicCount > total * 0.3) {
+    // Arabic script => Arabic (primary)
+    if (arabicCount > meaningfulTotal * 0.3) {
       return 'ar';
     }
 
-    // Han-only (no kana) -> Chinese
-    if (hanCount > total * 0.3 && kanaKanjiCount == hanCount) {
+    // Han with no kana => treat as Chinese by default
+    if (hanCount > meaningfulTotal * 0.3) {
       return 'zh';
     }
 
-    // Latin script or mixed -> null (use default)
+    // Latin / mixed => null (use default)
     return null;
+  }
+
+  bool _isIgnorableForLangDetect(int rune) {
+    // whitespace + control
+    if (rune <= 0x20) return true;
+
+    // ASCII digits
+    if (rune >= 0x30 && rune <= 0x39) return true;
+
+    // ASCII punctuation / symbols
+    if ((rune >= 0x21 && rune <= 0x2F) || // !"#$%&'()*+,-./
+        (rune >= 0x3A && rune <= 0x40) || // :;<=>?@
+        (rune >= 0x5B && rune <= 0x60) || // [\]^_`
+        (rune >= 0x7B && rune <= 0x7E)) { // {|}~
+      return true;
+    }
+
+    return false;
   }
 
   /// Returns a list of language candidates based on script heuristics.
