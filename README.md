@@ -1,16 +1,33 @@
-# wiki_ish_battlebox_generator
+# Battlebox Generator
 
-A new Flutter project.
+Battlebox Generator is a Flutter/Riverpod–based editor for Wikipedia-style “battleboxes” (the **Infobox military conflict** template). It lets you edit an infobox visually while keeping a live wikitext representation in sync.
 
-## Getting Started
+## Features
 
-This project is a starting point for a Flutter application.
+- **Visual battlebox editor**
+    - Editable title, media, single-field rows, list fields, and multi-column sections (combatants, commanders, units, strength, casualties).
+    - Add/remove list items and belligerent columns.
 
-A few resources to get you started if this is your first Flutter project:
+- **Wikitext import/export**
+    - Two-way conversion between a `BattleBoxDoc` model and wikitext via a pluggable `BattleboxSerializer`.
+    - Inline editor panel for pasting/importing/exporting raw wikitext.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+- **Wiki-style inline rendering**
+    - Parses and renders inline wikitext:
+        - `{{flagicon|...}}` macros
+        - `[[Wiki links]]`, `[https:// external links]`, and bare URLs
+    - Uses MediaWiki APIs to resolve:
+        - Flag icons (`WikiIconGateway`)
+        - Page URLs and existence (blue vs. red links via `WikiLinkGateway`)
+    - Supports clickable links via an `ExternalLinkOpener` port.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- **Cross-platform image export**
+    - Renders the battlebox card to a PNG and exports it through an `ImageExporter`:
+        - Web: triggers a browser download.
+        - IO (desktop/mobile): writes to a temporary file and returns its path.
+    - Pre-caches flag icons and media images before capture for reliable output.
+
+- **Testable core**
+    - Pure domain model and services (`BattleBoxDoc`, sections, `BattleboxEditor`).
+    - Abstractions for time (`Clock`) and IDs (`IdGenerator`) to support deterministic testing.
+    - Small utilities like `IterableExt.firstOrNull` for ergonomics.
