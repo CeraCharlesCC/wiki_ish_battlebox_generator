@@ -5,8 +5,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../src/battlebox/application/usecases/compute_precache_requests.dart';
-import '../src/battlebox/presentation/state/providers.dart';
+import '../../application/usecases/compute_precache_requests.dart';
+import '../state/providers.dart';
 import '../widgets/battlebox_card.dart';
 
 const _wikiSurface = Color(0xFFF8F9FA);

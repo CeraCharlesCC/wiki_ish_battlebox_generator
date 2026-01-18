@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'screens/battlebox_editor_screen.dart';
+import 'src/battlebox/presentation/screens/battlebox_editor_screen.dart';
 
 void main() {
   runApp(const ProviderScope(child: WikiishBattleBoxGenerator()));

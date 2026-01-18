@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../src/battlebox/domain/entities/sections.dart';
-import '../src/battlebox/presentation/state/providers.dart';
+import '../../domain/entities/sections.dart';
+import '../state/providers.dart';
 import 'editable_value.dart';
-import '../src/battlebox/presentation/widgets/wikitext_inline_renderer.dart';
+import 'wikitext_inline_renderer.dart';
 
 const _infoboxBorder = Color(0xFFA2A9B1);
 const _infoboxBackground = Color(0xFFF8F9FA);
