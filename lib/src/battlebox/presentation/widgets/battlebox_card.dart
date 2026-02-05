@@ -16,10 +16,7 @@ const _infoboxIconColor = Color(0xFF54595D);
 class BattleBoxCard extends ConsumerWidget {
   final bool isExportMode;
 
-  const BattleBoxCard({
-    super.key,
-    this.isExportMode = false,
-  });
+  const BattleBoxCard({super.key, this.isExportMode = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -47,31 +44,31 @@ class BattleBoxCard extends ConsumerWidget {
                   (!isExportMode || !_isSectionEmpty(section)))
                 switch (section) {
                   MediaSection section => _MediaBlock(
-                      section: section,
-                      onUpdate: controller.setMedia,
-                      isExportMode: isExportMode,
-                    ),
+                    section: section,
+                    onUpdate: controller.setMedia,
+                    isExportMode: isExportMode,
+                  ),
                   SingleFieldSection section => _SingleFieldRow(
-                      section: section,
-                      onChanged: controller.setSingleField,
-                      onClear: controller.clearSingleField,
-                      isExportMode: isExportMode,
-                    ),
+                    section: section,
+                    onChanged: controller.setSingleField,
+                    onClear: controller.clearSingleField,
+                    isExportMode: isExportMode,
+                  ),
                   ListFieldSection section => _ListFieldRow(
-                      section: section,
-                      onAdd: controller.addListItem,
-                      onChanged: controller.updateListItem,
-                      onDelete: controller.deleteListItem,
-                      isExportMode: isExportMode,
-                    ),
+                    section: section,
+                    onAdd: controller.addListItem,
+                    onChanged: controller.updateListItem,
+                    onDelete: controller.deleteListItem,
+                    isExportMode: isExportMode,
+                  ),
                   MultiColumnSection section => _MultiColumnBlock(
-                      section: section,
-                      onAddColumn: controller.addBelligerentColumn,
-                      onDeleteColumn: controller.deleteBelligerentColumn,
-                      onChanged: controller.updateMultiColumnCell,
-                      showAddColumn: section.id == 'combatants',
-                      isExportMode: isExportMode,
-                    ),
+                    section: section,
+                    onAddColumn: controller.addBelligerentColumn,
+                    onDeleteColumn: controller.deleteBelligerentColumn,
+                    onChanged: controller.updateMultiColumnCell,
+                    showAddColumn: section.id == 'combatants',
+                    isExportMode: isExportMode,
+                  ),
                   _ => const SizedBox.shrink(),
                 },
           ],
@@ -110,9 +107,9 @@ class _HeaderBlock extends StatelessWidget {
         isReadOnly: isExportMode,
         showPlaceholderWhenEmpty: !isExportMode,
         textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: const Color(0xFF202122),
-              fontWeight: FontWeight.w700,
-            ),
+          color: const Color(0xFF202122),
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
@@ -125,7 +122,8 @@ class _MediaBlock extends StatelessWidget {
     String? caption,
     String? size,
     String? upright,
-  }) onUpdate;
+  })
+  onUpdate;
   final bool isExportMode;
 
   const _MediaBlock({
@@ -160,7 +158,10 @@ class _MediaBlock extends StatelessWidget {
                       fit: BoxFit.cover,
                       width: double.infinity,
                       errorBuilder: (context, error, stackTrace) {
-                        return _imagePlaceholder(context, showText: !isExportMode);
+                        return _imagePlaceholder(
+                          context,
+                          showText: !isExportMode,
+                        );
                       },
                     ),
                   )
@@ -199,10 +200,9 @@ class _MediaBlock extends StatelessWidget {
     return Center(
       child: Text(
         'Tap to add image',
-        style: Theme.of(context)
-            .textTheme
-            .bodySmall
-            ?.copyWith(color: const Color(0xFF6C7278)),
+        style: Theme.of(
+          context,
+        ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6C7278)),
       ),
     );
   }
@@ -311,7 +311,8 @@ class _MultiColumnBlock extends StatelessWidget {
   final MultiColumnSection section;
   final VoidCallback onAddColumn;
   final void Function(int index) onDeleteColumn;
-  final void Function(String sectionId, int columnIndex, String value) onChanged;
+  final void Function(String sectionId, int columnIndex, String value)
+  onChanged;
   final bool showAddColumn;
   final bool isExportMode;
 
@@ -347,9 +348,9 @@ class _MultiColumnBlock extends StatelessWidget {
                     child: Text(
                       section.label,
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            color: const Color(0xFF202122),
-                            fontWeight: FontWeight.w700,
-                          ),
+                        color: const Color(0xFF202122),
+                        fontWeight: FontWeight.w700,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -395,9 +396,7 @@ class _MultiColumnBlock extends StatelessWidget {
                                 Expanded(
                                   child: Text(
                                     section.columns[i].label,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
+                                    style: Theme.of(context).textTheme.bodySmall
                                         ?.copyWith(
                                           fontWeight: FontWeight.w600,
                                           color: const Color(0xFF202122),
@@ -416,7 +415,9 @@ class _MultiColumnBlock extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.all(8),
                           child: EditableValue(
-                            value: section.cells[i].map((e) => e.raw).join('\n'),
+                            value: section.cells[i]
+                                .map((e) => e.raw)
+                                .join('\n'),
                             onCommit: (value) =>
                                 onChanged(section.id, i, value),
                             multiline: true,
@@ -466,9 +467,7 @@ class _BattleBoxRow extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               decoration: const BoxDecoration(
                 color: _infoboxLabelBackground,
-                border: Border(
-                  right: BorderSide(color: _infoboxBorder),
-                ),
+                border: Border(right: BorderSide(color: _infoboxBorder)),
               ),
               child: Row(
                 children: [
@@ -476,9 +475,9 @@ class _BattleBoxRow extends StatelessWidget {
                     child: Text(
                       label,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF202122),
-                          ),
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF202122),
+                      ),
                     ),
                   ),
                   if (showAdd)
@@ -513,7 +512,6 @@ class _IconButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onPressed,
-    this.color,
   });
 
   @override
@@ -531,13 +529,15 @@ class _IconButton extends StatelessWidget {
 
 bool _isSectionEmpty(SectionModel section) {
   return switch (section) {
-    MediaSection s => (s.imageUrl?.trim().isEmpty ?? true) &&
-        (s.caption?.trim().isEmpty ?? true),
+    MediaSection s =>
+      (s.imageUrl?.trim().isEmpty ?? true) &&
+          (s.caption?.trim().isEmpty ?? true),
     SingleFieldSection s => s.value?.isEmpty ?? true,
     ListFieldSection s =>
       s.items.isEmpty || s.items.every((item) => item.isEmpty),
-    MultiColumnSection s =>
-      s.cells.every((column) => column.every((cell) => cell.isEmpty)),
+    MultiColumnSection s => s.cells.every(
+      (column) => column.every((cell) => cell.isEmpty),
+    ),
     _ => false,
   };
 }
