@@ -86,6 +86,20 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
     final values = <String, String>{};
     String? currentKey;
     final currentValue = StringBuffer();
+    var nestedTemplateDepth = 0;
+
+    var startIndex = 0;
+    if (lines.isNotEmpty && lines.first.trimLeft().startsWith('{{')) {
+      startIndex = 1;
+    }
+
+    var endIndex = lines.length;
+    while (endIndex > startIndex && lines[endIndex - 1].trim().isEmpty) {
+      endIndex--;
+    }
+    if (endIndex > startIndex && lines[endIndex - 1].trim() == '}}') {
+      endIndex--;
+    }
 
     void flush() {
       if (currentKey == null) {
@@ -94,24 +108,30 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
       values[currentKey!] = currentValue.toString().trim();
       currentKey = null;
       currentValue.clear();
+      nestedTemplateDepth = 0;
     }
 
-    for (final line in lines) {
+    for (var lineIndex = startIndex; lineIndex < endIndex; lineIndex++) {
+      final line = lines[lineIndex];
       final trimmed = line.trimRight();
-      if (trimmed.startsWith('{{') || trimmed.startsWith('}}')) {
-        continue;
-      }
       final leftTrim = trimmed.trimLeft();
-      if (leftTrim.startsWith('|') && leftTrim.contains('=')) {
+      final isTopLevelKeyValue =
+          currentKey == null ||
+          (nestedTemplateDepth == 0 &&
+              leftTrim.startsWith('|') &&
+              leftTrim.contains('='));
+      if (isTopLevelKeyValue && leftTrim.startsWith('|') && leftTrim.contains('=')) {
         flush();
         final eqIndex = leftTrim.indexOf('=');
         final rawKey = leftTrim.substring(1, eqIndex).trim();
         final rawValue = leftTrim.substring(eqIndex + 1).trimRight();
         currentKey = rawKey;
         currentValue.write(rawValue);
+        nestedTemplateDepth = _templateDepth(rawValue);
       } else if (currentKey != null) {
         currentValue.writeln();
         currentValue.write(trimmed);
+        nestedTemplateDepth += _templateDepth(trimmed);
       }
     }
     flush();
@@ -137,7 +157,7 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
       updated = _updateList(updated, label, _parseLines(raw));
     }
 
-    final multiBuckets = <String, Map<int, String>>{};
+    final multiBuckets = <String, Map<int, List<String>>>{};
     int maxIndex = 0;
 
     values.forEach((key, value) {
@@ -173,14 +193,37 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
           updated = _updateMedia(updated, lowerKey, value);
           break;
         default:
-          final match = RegExp(r'^(combatant|commander|units|strength|casualties)(\d+)$')
+          const multiSectionKeys = {
+            'combatant',
+            'commander',
+            'units',
+            'strength',
+            'casualties',
+          };
+          if (multiSectionKeys.contains(lowerKey)) {
+            maxIndex = maxIndex < 1 ? 1 : maxIndex;
+            _appendMultiValue(
+              buckets: multiBuckets,
+              sectionKey: lowerKey,
+              columnIndex: 1,
+              value: value,
+            );
+            break;
+          }
+
+          final match = RegExp(r'^(combatant|commander|units|strength|casualties)(\d+)([a-z]+)?$')
               .firstMatch(lowerKey);
           if (match != null) {
             final sectionKey = match.group(1)!;
             final index = int.tryParse(match.group(2) ?? '') ?? 0;
             if (index > 0) {
               maxIndex = index > maxIndex ? index : maxIndex;
-              multiBuckets.putIfAbsent(sectionKey, () => {})[index] = value;
+              _appendMultiValue(
+                buckets: multiBuckets,
+                sectionKey: sectionKey,
+                columnIndex: index,
+                value: value,
+              );
             }
           } else {
             custom[normalizedKey] = value;
@@ -243,7 +286,7 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
   BattleBoxDoc _updateMultiColumns(
     BattleBoxDoc doc,
     int count,
-    Map<String, Map<int, String>> buckets,
+    Map<String, Map<int, List<String>>> buckets,
   ) {
     final sections = doc.sections.map((section) {
       if (section is! MultiColumnSection) {
@@ -265,12 +308,23 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
       for (final entry in values.entries) {
         final index = entry.key - 1;
         if (index >= 0 && index < cells.length) {
-          cells[index] = _parseLines(entry.value);
+          cells[index] = _parseLines(entry.value.join('\n'));
         }
       }
       return section.copyWith(columns: columns, cells: cells);
     }).toList();
     return doc.copyWith(sections: sections);
+  }
+
+  void _appendMultiValue({
+    required Map<String, Map<int, List<String>>> buckets,
+    required String sectionKey,
+    required int columnIndex,
+    required String value,
+  }) {
+    final byColumn = buckets.putIfAbsent(sectionKey, () => {});
+    final values = byColumn.putIfAbsent(columnIndex, () => []);
+    values.add(value);
   }
 
   void _writeSingle(
@@ -350,5 +404,23 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
       default:
         return '';
     }
+  }
+
+  int _templateDepth(String input) {
+    var depth = 0;
+    for (var i = 0; i < input.length - 1; i++) {
+      final first = input[i];
+      final second = input[i + 1];
+      if (first == '{' && second == '{') {
+        depth++;
+        i++;
+        continue;
+      }
+      if (first == '}' && second == '}') {
+        depth--;
+        i++;
+      }
+    }
+    return depth;
   }
 }

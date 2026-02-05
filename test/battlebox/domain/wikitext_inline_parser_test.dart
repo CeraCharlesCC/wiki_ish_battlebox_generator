@@ -39,4 +39,14 @@ void main() {
     expect(tokens.length, 1);
     expect((tokens.first as InlineText).text, '{{Plainlist|');
   });
+
+  test('file links do not use trailing media options as label', () {
+    const input = '[[File:Wappen Heilbronn.svg|18px|class=noviewer]]';
+    final tokens = parser.parse(input);
+
+    expect(tokens.length, 1);
+    final link = tokens.first as InlineWikiLink;
+    expect(link.rawTarget, 'File:Wappen Heilbronn.svg');
+    expect(link.displayText, 'File:Wappen Heilbronn.svg');
+  });
 }

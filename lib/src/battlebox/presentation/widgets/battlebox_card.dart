@@ -512,6 +512,7 @@ class _IconButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onPressed,
+    this.color = _infoboxIconColor,
   });
 
   @override

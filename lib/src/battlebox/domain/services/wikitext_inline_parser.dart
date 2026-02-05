@@ -436,25 +436,29 @@ class WikitextInlineParser {
 
   /// Parses a wiki link from the inner content (without `[[` and `]]`).
   InlineWikiLink _parseWikiLink(String inner) {
-    // Handle multiple pipes: target = first segment, label = last segment
-    final pipeIndex = inner.indexOf('|');
-    final lastPipeIndex = inner.lastIndexOf('|');
-
-    String targetPart;
+    final segments = inner.split('|');
+    final targetPart = segments.first.trim();
     String? labelPart;
 
-    if (pipeIndex == -1) {
+    if (segments.length == 1) {
       // No pipe: [[Target]]
-      targetPart = inner.trim();
       labelPart = null;
-    } else if (lastPipeIndex == inner.length - 1) {
+    } else if (inner.endsWith('|')) {
       // Pipe trick: [[Target|]]
-      targetPart = inner.substring(0, pipeIndex).trim();
       labelPart = _applyPipeTrick(targetPart);
+    } else if (_isMediaNamespaceTarget(targetPart)) {
+      // For file/image links, trailing segments are often options (e.g., 18px, class=...).
+      // Prefer the last non-option segment as label; otherwise fallback to target title.
+      final trailing = segments
+          .skip(1)
+          .map((part) => part.trim())
+          .where((part) => part.isNotEmpty)
+          .toList();
+      final nonOption = trailing.where((part) => !_looksLikeMediaOption(part)).toList();
+      labelPart = nonOption.isNotEmpty ? nonOption.last : null;
     } else {
       // Has label: [[Target|Label]] or [[Target|x|Label]]
-      targetPart = inner.substring(0, pipeIndex).trim();
-      labelPart = inner.substring(lastPipeIndex + 1).trim();
+      labelPart = segments.last.trim();
     }
 
     // Extract language prefix (e.g., :ja:Title or ja:Title)
@@ -535,6 +539,53 @@ class WikitextInlineParser {
       return fragment;
     }
     return target;
+  }
+
+  bool _isMediaNamespaceTarget(String target) {
+    var normalized = target.trimLeft();
+    if (normalized.startsWith(':')) {
+      normalized = normalized.substring(1);
+    }
+    final colonIndex = normalized.indexOf(':');
+    if (colonIndex <= 0) {
+      return false;
+    }
+    final namespace = normalized.substring(0, colonIndex).trim().toLowerCase();
+    return namespace == 'file' ||
+        namespace == 'image' ||
+        namespace == 'ファイル' ||
+        namespace == '画像';
+  }
+
+  bool _looksLikeMediaOption(String value) {
+    final lower = value.trim().toLowerCase();
+    if (lower.isEmpty) {
+      return false;
+    }
+    if (RegExp(r'^\d+\s*px$').hasMatch(lower)) {
+      return true;
+    }
+    if (RegExp(r'^\d*x\d+px$').hasMatch(lower)) {
+      return true;
+    }
+    if (lower == 'thumb' ||
+        lower == 'thumbnail' ||
+        lower == 'frame' ||
+        lower == 'frameless' ||
+        lower == 'border' ||
+        lower == 'right' ||
+        lower == 'left' ||
+        lower == 'center' ||
+        lower == 'none' ||
+        lower == 'upright' ||
+        lower.startsWith('upright=') ||
+        lower.startsWith('class=') ||
+        lower.startsWith('alt=') ||
+        lower.startsWith('link=') ||
+        lower.startsWith('lang=')) {
+      return true;
+    }
+    return false;
   }
 
   /// Parses an external link from the inner content (without `[` and `]`).
