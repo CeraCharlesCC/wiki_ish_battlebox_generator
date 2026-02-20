@@ -384,9 +384,86 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
   }
 
   List<RichTextValue> _parseLines(String raw) {
-    final normalized = raw.replaceAll('<br>', '\n').replaceAll('<br />', '\n');
-    final parts = normalized.split('\n');
+    final normalized = raw
+        .replaceAll('<br />', '\n')
+        .replaceAll('<br/>', '\n')
+        .replaceAll('<br>', '\n')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+    final parts = _splitTopLevelLines(normalized);
     return parts.map((part) => RichTextValue(part.trim())).toList();
+  }
+
+  List<String> _splitTopLevelLines(String input) {
+    final parts = <String>[];
+    final buffer = StringBuffer();
+    var templateDepth = 0;
+    var wikiLinkDepth = 0;
+    var externalLinkDepth = 0;
+    var i = 0;
+
+    while (i < input.length) {
+      final char = input[i];
+
+      if (i + 1 < input.length && char == '{' && input[i + 1] == '{') {
+        templateDepth++;
+        buffer.write('{{');
+        i += 2;
+        continue;
+      }
+      if (i + 1 < input.length && char == '}' && input[i + 1] == '}') {
+        if (templateDepth > 0) {
+          templateDepth--;
+        }
+        buffer.write('}}');
+        i += 2;
+        continue;
+      }
+      if (i + 1 < input.length && char == '[' && input[i + 1] == '[') {
+        wikiLinkDepth++;
+        buffer.write('[[');
+        i += 2;
+        continue;
+      }
+      if (i + 1 < input.length && char == ']' && input[i + 1] == ']') {
+        if (wikiLinkDepth > 0) {
+          wikiLinkDepth--;
+        }
+        buffer.write(']]');
+        i += 2;
+        continue;
+      }
+      if (char == '[' && (i + 1 >= input.length || input[i + 1] != '[')) {
+        if (wikiLinkDepth == 0) {
+          externalLinkDepth++;
+        }
+        buffer.write(char);
+        i++;
+        continue;
+      }
+      if (char == ']' && externalLinkDepth > 0 && wikiLinkDepth == 0) {
+        externalLinkDepth--;
+        buffer.write(char);
+        i++;
+        continue;
+      }
+
+      if (char == '\n' &&
+          templateDepth == 0 &&
+          wikiLinkDepth == 0 &&
+          externalLinkDepth == 0) {
+        parts.add(buffer.toString());
+        buffer.clear();
+        i++;
+        continue;
+      }
+
+      buffer.write(char);
+      i++;
+    }
+
+    parts.add(buffer.toString());
+    return parts;
   }
 
   String _multiKeyForLabel(String label) {

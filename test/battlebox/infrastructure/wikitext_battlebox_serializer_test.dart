@@ -46,9 +46,33 @@ void main() {
 
     final doc = serializer.parse(input);
     final section = doc.sectionById('combatants') as MultiColumnSection;
+    expect(section.cells[0].length, 1);
     final columnText = section.cells[0].map((item) => item.raw).join('\n');
 
     expect(columnText, contains('{{Plainlist|'));
     expect(columnText, contains('}}'));
+  });
+
+  test('parse keeps efn + plainlist block in a single combatant cell', () {
+    const input = """
+{{Infobox military conflict
+| conflict = Example battle
+| combatant1 = '''Anti-Habsburg alliance prior to 1635'''{{Efn|States that fought against the emperor at some point between 1618 and 1635.}}{{Plainlist|
+* {{Flagicon|Kingdom of Bohemia}} [[Bohemia]]
+* {{Flagicon|Swedish Empire}} [[Sweden]]
+}}
+| combatant2 = Opposing force
+}}
+""";
+
+    final doc = serializer.parse(input);
+    final section = doc.sectionById('combatants') as MultiColumnSection;
+
+    expect(section.cells[0].length, 1);
+    final raw = section.cells[0].first.raw;
+    expect(raw, contains('{{Efn|States that fought against the emperor'));
+    expect(raw, contains('{{Plainlist|'));
+    expect(raw, contains('* {{Flagicon|Kingdom of Bohemia}} [[Bohemia]]'));
+    expect(raw, contains('}}'));
   });
 }

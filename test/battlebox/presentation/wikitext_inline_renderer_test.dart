@@ -92,6 +92,15 @@ void main() {
     expect(_findRichTextContaining('Second item'), findsOneWidget);
   });
 
+  testWidgets('bulletlist renders bullets and items', (tester) async {
+    const input = '{{Bulletlist| First item | Second item}}';
+    await tester.pumpWidget(_buildTestWidget(input));
+
+    expect(find.textContaining('•'), findsNWidgets(2));
+    expect(_findRichTextContaining('First item'), findsOneWidget);
+    expect(_findRichTextContaining('Second item'), findsOneWidget);
+  });
+
   testWidgets('efn renders a marker', (tester) async {
     const input = 'Alpha{{Efn|Note text}}Beta';
     await tester.pumpWidget(_buildTestWidget(input));

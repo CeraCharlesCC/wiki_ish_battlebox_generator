@@ -22,6 +22,22 @@ void main() {
     expect(list.itemRaws, const ['[[Page|Label]]']);
   });
 
+  test('bulletlist parses unnamed items with nested templates', () {
+    const input = '''
+{{Bulletlist
+| France annexes [[Sundgau]]{{Sfn|Croxton|2013|pp=225-226}}
+| Sweden gains [[Wismar]]
+}}''';
+    final tokens = parser.parse(input);
+
+    expect(tokens.length, 1);
+    final list = tokens.first as InlinePlainlistMacro;
+    expect(list.itemRaws, const [
+      'France annexes [[Sundgau]]{{Sfn|Croxton|2013|pp=225-226}}',
+      'Sweden gains [[Wismar]]',
+    ]);
+  });
+
   test('efn extraction splits surrounding text', () {
     const input = 'foo{{Efn|bar}}baz';
     final tokens = parser.parse(input);

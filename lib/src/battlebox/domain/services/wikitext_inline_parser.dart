@@ -4,6 +4,7 @@
 /// - Icon macros: `{{flagicon|USA}}`
 /// - Explanatory footnotes: `{{Efn|...}}`
 /// - Plainlist bullets: `{{Plainlist| * item }}` (items on their own lines)
+/// - Bulletlist bullets: `{{Bulletlist| item1 | item2 }}`
 /// - Internal wiki links: `[[Target]]`, `[[Target|Label]]`, `[[Page#Section|Label]]`
 /// - External links: `[https://example.com Label]`, `[https://example.com]`
 /// - Bare URLs: `https://example.com`
@@ -355,11 +356,11 @@ class WikitextInlineParser {
     }
 
     if (templateKey == 'efn') {
-      final unnamed = _firstUnnamedParam(parts);
+      final namedParams = _namedParams(parts);
+      final unnamed = _firstUnnamedParam(parts) ?? namedParams['1'];
       if (unnamed == null || unnamed.isEmpty) {
         return null;
       }
-      final namedParams = _namedParams(parts);
       return InlineEfnMacro(
         noteRaw: unnamed,
         fallbackText: rawTemplate,
@@ -368,12 +369,15 @@ class WikitextInlineParser {
       );
     }
 
-    if (templateKey == 'plainlist') {
-      final listRaw = _firstUnnamedParam(parts);
-      if (listRaw == null || listRaw.isEmpty) {
+    if (templateKey == 'plainlist' || templateKey == 'plain list') {
+      final unnamed = _unnamedParams(parts);
+      if (unnamed.isEmpty) {
         return null;
       }
-      final normalized = listRaw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+      final normalized = unnamed
+          .join('\n')
+          .replaceAll('\r\n', '\n')
+          .replaceAll('\r', '\n');
       final items = <String>[];
       for (final line in normalized.split('\n')) {
         final trimmed = line.trimLeft();
@@ -385,6 +389,35 @@ class WikitextInlineParser {
           item = item.substring(1);
         }
         if (item.trim().isEmpty) {
+          continue;
+        }
+        items.add(item);
+      }
+      if (items.isEmpty) {
+        return null;
+      }
+      return InlinePlainlistMacro(
+        itemRaws: items,
+        fallbackText: rawTemplate,
+      );
+    }
+
+    if (templateKey == 'bulletlist' || templateKey == 'bullet list') {
+      final unnamed = _unnamedParams(parts);
+      if (unnamed.isEmpty) {
+        return null;
+      }
+      final items = <String>[];
+      for (var item in unnamed) {
+        item = item.trim();
+        if (item.isEmpty) {
+          continue;
+        }
+        // Accept accidental `*` prefixes and normalize like plainlist items.
+        if (item.startsWith('*')) {
+          item = item.substring(1).trimLeft();
+        }
+        if (item.isEmpty) {
           continue;
         }
         items.add(item);
@@ -410,7 +443,7 @@ class WikitextInlineParser {
       final part = parts[i];
       if (part.isEmpty) continue;
 
-      final eqIndex = part.indexOf('=');
+      final eqIndex = _indexOfTopLevelEquals(part);
       if (eqIndex != -1) {
         final key = part.substring(0, eqIndex).trim().toLowerCase();
         final value = part.substring(eqIndex + 1).trim();
@@ -775,20 +808,31 @@ class WikitextInlineParser {
   }
 
   String? _firstUnnamedParam(List<String> parts) {
+    final unnamed = _unnamedParams(parts);
+    return unnamed.isEmpty ? null : unnamed.first;
+  }
+
+  List<String> _unnamedParams(List<String> parts) {
+    final params = <String>[];
     for (var i = 1; i < parts.length; i++) {
       final part = parts[i];
-      if (!_isNamedParam(part)) {
-        return part.trim();
+      if (_isNamedParam(part)) {
+        continue;
       }
+      final trimmed = part.trim();
+      if (trimmed.isEmpty) {
+        continue;
+      }
+      params.add(trimmed);
     }
-    return null;
+    return params;
   }
 
   Map<String, String> _namedParams(List<String> parts) {
     final params = <String, String>{};
     for (var i = 1; i < parts.length; i++) {
       final part = parts[i];
-      final eqIndex = part.indexOf('=');
+      final eqIndex = _indexOfTopLevelEquals(part);
       if (eqIndex == -1) {
         continue;
       }
@@ -803,11 +847,70 @@ class WikitextInlineParser {
   }
 
   bool _isNamedParam(String part) {
-    final eqIndex = part.indexOf('=');
+    final eqIndex = _indexOfTopLevelEquals(part);
     if (eqIndex <= 0) {
       return false;
     }
-    return part.substring(0, eqIndex).trim().isNotEmpty;
+    final key = part.substring(0, eqIndex).trim();
+    if (key.isEmpty) {
+      return false;
+    }
+    return RegExp(r'^[a-zA-Z0-9 _-]+$').hasMatch(key);
+  }
+
+  int _indexOfTopLevelEquals(String input) {
+    var templateDepth = 0;
+    var wikiLinkDepth = 0;
+    var externalLinkDepth = 0;
+    var i = 0;
+
+    while (i < input.length) {
+      final char = input[i];
+      if (i + 1 < input.length && char == '{' && input[i + 1] == '{') {
+        templateDepth++;
+        i += 2;
+        continue;
+      }
+      if (i + 1 < input.length && char == '}' && input[i + 1] == '}') {
+        if (templateDepth > 0) {
+          templateDepth--;
+        }
+        i += 2;
+        continue;
+      }
+      if (i + 1 < input.length && char == '[' && input[i + 1] == '[') {
+        wikiLinkDepth++;
+        i += 2;
+        continue;
+      }
+      if (i + 1 < input.length && char == ']' && input[i + 1] == ']') {
+        if (wikiLinkDepth > 0) {
+          wikiLinkDepth--;
+        }
+        i += 2;
+        continue;
+      }
+      if (char == '[' && (i + 1 >= input.length || input[i + 1] != '[')) {
+        if (wikiLinkDepth == 0) {
+          externalLinkDepth++;
+        }
+        i++;
+        continue;
+      }
+      if (char == ']' && externalLinkDepth > 0 && wikiLinkDepth == 0) {
+        externalLinkDepth--;
+        i++;
+        continue;
+      }
+      if (char == '=' &&
+          templateDepth == 0 &&
+          wikiLinkDepth == 0 &&
+          externalLinkDepth == 0) {
+        return i;
+      }
+      i++;
+    }
+    return -1;
   }
 
   /// Checks if a string is a valid Wikipedia language code.
