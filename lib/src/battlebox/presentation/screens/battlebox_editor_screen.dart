@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/usecases/compute_precache_requests.dart';
+import '../../domain/entities/wikitext_import_report.dart';
 import '../state/providers.dart';
 import '../widgets/battlebox_card.dart';
 
@@ -101,6 +102,9 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
             const SnackBar(content: Text('Export failed: card not ready.')),
           );
         }
+        return;
+      }
+      if (!mounted) {
         return;
       }
       final pixelRatio = MediaQuery.of(context).devicePixelRatio;
@@ -306,7 +310,7 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
   }
 }
 
-class WikitextPanel extends StatelessWidget {
+class WikitextPanel extends ConsumerWidget {
   final TextEditingController controller;
   final VoidCallback onImport;
   final VoidCallback onExport;
@@ -331,8 +335,23 @@ class WikitextPanel extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final bodyVisible = !isCollapsible || isExpanded;
+    final report = ref.watch(battleboxEditorNotifierProvider).importReport;
+    final reportFields = report?.fields.values.toList() ?? const <ImportFieldReport>[];
+    final flaggedFields = reportFields
+        .where(
+          (field) =>
+              field.status == ImportFieldStatus.partial ||
+              field.status == ImportFieldStatus.failed,
+        )
+        .toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    final fieldsWithFragments = reportFields
+        .where((field) => field.unparsedFragments.isNotEmpty)
+        .toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -414,6 +433,81 @@ class WikitextPanel extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (report != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'Import report',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: _wikiText,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Parsed: ${report.parsedCount} • Partial: ${report.partialCount} • Failed: ${report.failedCount}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _wikiSubtleText,
+                        ),
+                  ),
+                  if (flaggedFields.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    for (final field in flaggedFields)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text(
+                          '${field.key}: ${field.status.name}${field.firstOffendingToken == null ? '' : ' • ${field.firstOffendingToken}'}',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: _wikiText,
+                              ),
+                        ),
+                      ),
+                  ],
+                  if (fieldsWithFragments.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Unparsed fragments',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: _wikiText,
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    for (final field in fieldsWithFragments)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              field.key,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: _wikiSubtleText,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                            const SizedBox(height: 2),
+                            for (final fragment in field.unparsedFragments)
+                              Container(
+                                width: double.infinity,
+                                margin: const EdgeInsets.only(top: 2),
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: _wikiBorder),
+                                ),
+                                child: SelectableText(
+                                  fragment,
+                                  style: const TextStyle(
+                                    fontFamily: 'Courier New',
+                                    fontSize: 11,
+                                    color: _wikiText,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ],
               ],
             ),
             crossFadeState: bodyVisible

@@ -506,13 +506,11 @@ class _IconButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback onPressed;
-  final Color? color;
 
   const _IconButton({
     required this.icon,
     required this.tooltip,
     required this.onPressed,
-    this.color = _infoboxIconColor,
   });
 
   @override
@@ -520,7 +518,7 @@ class _IconButton extends StatelessWidget {
     return IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
-      icon: Icon(icon, size: 18, color: color ?? _infoboxIconColor),
+      icon: Icon(icon, size: 18, color: _infoboxIconColor),
       splashRadius: 16,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 24, minHeight: 24),

@@ -4,16 +4,26 @@ import '../../domain/entities/battlebox_doc.dart';
 import '../../domain/entities/column_model.dart';
 import '../../domain/entities/rich_text_value.dart';
 import '../../domain/entities/sections.dart';
+import '../../domain/entities/wikitext_import_report.dart';
 import '../../domain/services/battlebox_seed.dart';
+import '../../domain/services/wikitext_balanced_scanner.dart';
+import '../../domain/services/wikitext_field_extractors.dart';
 
 /// Wikitext implementation of BattleboxSerializer.
 ///
 /// Parses and exports battlebox documents in Wikipedia template format.
 class WikitextBattleboxSerializer implements BattleboxSerializer {
   final IdGenerator _idGenerator;
+  final WikitextBalancedScanner _balancedScanner;
+  final WikitextFieldExtractors _fieldExtractors;
 
-  WikitextBattleboxSerializer({IdGenerator? idGenerator})
-      : _idGenerator = idGenerator ?? const TimestampIdGenerator();
+  WikitextBattleboxSerializer({
+    IdGenerator? idGenerator,
+    WikitextBalancedScanner? balancedScanner,
+    WikitextFieldExtractors? fieldExtractors,
+  }) : _idGenerator = idGenerator ?? const TimestampIdGenerator(),
+       _balancedScanner = balancedScanner ?? const WikitextBalancedScanner(),
+       _fieldExtractors = fieldExtractors ?? const WikitextFieldExtractors();
 
   @override
   BattleBoxDoc parse(String input) {
@@ -21,8 +31,29 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
     if (template == null) {
       return BattleboxSeed(_idGenerator).create();
     }
-    final keyValues = _parseKeyValues(template);
-    return _buildDocFromKeyValues(keyValues);
+
+    Map<String, String> keyValues;
+    ImportFieldReport? topLevelReport;
+
+    try {
+      keyValues = _parseKeyValuesBalanced(template);
+      if (_isSuspiciousBalancedResult(template, keyValues)) {
+        throw const FormatException(
+          'Balanced parser produced too few infobox fields.',
+        );
+      }
+    } on FormatException catch (error) {
+      keyValues = _parseKeyValuesLegacy(template);
+      topLevelReport = ImportFieldReport(
+        key: '__infobox__',
+        status: ImportFieldStatus.failed,
+        parsedItemCount: 0,
+        unparsedFragments: [template],
+        firstOffendingToken: error.message.toString(),
+      );
+    }
+
+    return _buildDocFromKeyValues(keyValues, topLevelReport: topLevelReport);
   }
 
   @override
@@ -66,22 +97,97 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
     if (startIndex == -1) {
       return null;
     }
+
     var depth = 0;
-    for (var i = startIndex; i < input.length - 1; i++) {
-      final slice = input.substring(i, i + 2);
-      if (slice == '{{') {
+    var inComment = false;
+    var inRef = false;
+    var inTagHeader = false;
+    var i = startIndex;
+
+    while (i < input.length) {
+      if (inComment) {
+        if (wikitextStartsWithToken(input, i, '-->')) {
+          inComment = false;
+          i += 3;
+          continue;
+        }
+        i++;
+        continue;
+      }
+
+      if (inRef) {
+        if (wikitextStartsWithTokenIgnoreCase(input, i, '</ref>')) {
+          inRef = false;
+          i += 6;
+          continue;
+        }
+        i++;
+        continue;
+      }
+
+      if (inTagHeader) {
+        if (input[i] == '>') {
+          inTagHeader = false;
+        }
+        i++;
+        continue;
+      }
+
+      if (wikitextStartsWithToken(input, i, '<!--')) {
+        inComment = true;
+        i += 4;
+        continue;
+      }
+
+      if (wikitextStartsWithTokenIgnoreCase(input, i, '<ref')) {
+        final closing = input.indexOf('>', i + 1);
+        if (closing == -1) {
+          return null;
+        }
+        final tag = input.substring(i, closing + 1);
+        final isSelfClosing = tag.trimRight().endsWith('/>');
+        if (!isSelfClosing) {
+          inRef = true;
+        }
+        i = closing + 1;
+        continue;
+      }
+
+      if (input[i] == '<') {
+        inTagHeader = true;
+        i++;
+        continue;
+      }
+
+      if (wikitextStartsWithToken(input, i, '{{')) {
         depth++;
-      } else if (slice == '}}') {
+        i += 2;
+        continue;
+      }
+
+      if (wikitextStartsWithToken(input, i, '}}')) {
         depth--;
         if (depth == 0) {
           return input.substring(startIndex, i + 2);
         }
+        if (depth < 0) {
+          return null;
+        }
+        i += 2;
+        continue;
       }
+
+      i++;
     }
+
     return null;
   }
 
-  Map<String, String> _parseKeyValues(String template) {
+  Map<String, String> _parseKeyValuesBalanced(String template) {
+    return _balancedScanner.parseInfoboxParams(template);
+  }
+
+  Map<String, String> _parseKeyValuesLegacy(String template) {
     final lines = template.split('\n');
     final values = <String, String>{};
     String? currentKey;
@@ -120,7 +226,9 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
           (nestedTemplateDepth == 0 &&
               leftTrim.startsWith('|') &&
               leftTrim.contains('='));
-      if (isTopLevelKeyValue && leftTrim.startsWith('|') && leftTrim.contains('=')) {
+      if (isTopLevelKeyValue &&
+          leftTrim.startsWith('|') &&
+          leftTrim.contains('=')) {
         flush();
         final eqIndex = leftTrim.indexOf('=');
         final rawKey = leftTrim.substring(1, eqIndex).trim();
@@ -138,10 +246,17 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
     return values;
   }
 
-  BattleBoxDoc _buildDocFromKeyValues(Map<String, String> values) {
+  BattleBoxDoc _buildDocFromKeyValues(
+    Map<String, String> values, {
+    ImportFieldReport? topLevelReport,
+  }) {
     final doc = BattleboxSeed(_idGenerator).create();
     var updated = doc.copyWith(customFields: {});
     final custom = <String, String>{};
+    final fieldReports = <String, ImportFieldReport>{};
+    if (topLevelReport != null) {
+      fieldReports[topLevelReport.key] = topLevelReport;
+    }
 
     void setSingle(String label, String? raw) {
       if (raw == null) {
@@ -187,13 +302,23 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
           setSingle('Territorial changes', value);
           break;
         case 'image':
+          final extraction = _fieldExtractors.extractMediaImage(value);
+          final imageValue = extraction.items.isNotEmpty
+              ? extraction.items.first
+              : value;
+          updated = _updateMedia(updated, lowerKey, imageValue);
+          fieldReports[normalizedKey] = _toFieldReport(
+            normalizedKey,
+            extraction,
+          );
+          break;
         case 'caption':
         case 'image_size':
         case 'image_upright':
           updated = _updateMedia(updated, lowerKey, value);
           break;
         default:
-          const multiSectionKeys = {
+          const multiSectionKeys = <String>{
             'combatant',
             'commander',
             'units',
@@ -202,28 +327,51 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
           };
           if (multiSectionKeys.contains(lowerKey)) {
             maxIndex = maxIndex < 1 ? 1 : maxIndex;
+            final extraction = _extractForSection(
+              sectionKey: lowerKey,
+              raw: value,
+            );
+            final items = _bestEffortItems(extraction.items, value);
             _appendMultiValue(
               buckets: multiBuckets,
               sectionKey: lowerKey,
               columnIndex: 1,
-              value: value,
+              values: items,
             );
+            if (_isTargetedReportSection(lowerKey)) {
+              fieldReports[normalizedKey] = _toFieldReport(
+                normalizedKey,
+                extraction,
+              );
+            }
             break;
           }
 
-          final match = RegExp(r'^(combatant|commander|units|strength|casualties)(\d+)([a-z]+)?$')
-              .firstMatch(lowerKey);
+          final match = RegExp(
+            r'^(combatant|commander|units|strength|casualties)(\d+)([a-z]+)?$',
+          ).firstMatch(lowerKey);
           if (match != null) {
             final sectionKey = match.group(1)!;
             final index = int.tryParse(match.group(2) ?? '') ?? 0;
             if (index > 0) {
               maxIndex = index > maxIndex ? index : maxIndex;
+              final extraction = _extractForSection(
+                sectionKey: sectionKey,
+                raw: value,
+              );
+              final items = _bestEffortItems(extraction.items, value);
               _appendMultiValue(
                 buckets: multiBuckets,
                 sectionKey: sectionKey,
                 columnIndex: index,
-                value: value,
+                values: items,
               );
+              if (_isTargetedReportSection(sectionKey)) {
+                fieldReports[normalizedKey] = _toFieldReport(
+                  normalizedKey,
+                  extraction,
+                );
+              }
             }
           } else {
             custom[normalizedKey] = value;
@@ -236,7 +384,74 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
       updated = _updateMultiColumns(updated, maxIndex, multiBuckets);
     }
 
-    return updated.copyWith(customFields: custom);
+    return updated.copyWith(
+      customFields: custom,
+      importReport: WikitextImportReport(fields: fieldReports),
+    );
+  }
+
+  bool _isTargetedReportSection(String sectionKey) {
+    return sectionKey == 'combatant' ||
+        sectionKey == 'commander' ||
+        sectionKey == 'strength' ||
+        sectionKey == 'casualties';
+  }
+
+  ImportFieldReport _toFieldReport(
+    String key,
+    FieldExtractionResult extraction,
+  ) {
+    return ImportFieldReport(
+      key: key,
+      status: extraction.status,
+      parsedItemCount: extraction.items.length,
+      unparsedFragments: extraction.unparsedFragments,
+      firstOffendingToken: extraction.firstOffendingToken,
+    );
+  }
+
+  FieldExtractionResult _extractForSection({
+    required String sectionKey,
+    required String raw,
+  }) {
+    switch (sectionKey) {
+      case 'combatant':
+        return _fieldExtractors.extractCombatant(raw);
+      case 'commander':
+        return _fieldExtractors.extractCommander(raw);
+      case 'strength':
+        return _fieldExtractors.extractStrength(raw);
+      case 'casualties':
+        return _fieldExtractors.extractCasualties(raw);
+      default:
+        final fallback = _parseLines(raw)
+            .map((value) => value.raw.trim())
+            .where((value) => value.isNotEmpty)
+            .toList();
+        return FieldExtractionResult(
+          items: fallback,
+          unparsedFragments: const [],
+          firstOffendingToken: null,
+          status: raw.trim().isEmpty
+              ? ImportFieldStatus.skipped
+              : ImportFieldStatus.parsed,
+        );
+    }
+  }
+
+  List<String> _bestEffortItems(List<String> items, String rawValue) {
+    if (items.isNotEmpty) {
+      return items;
+    }
+    final fallback = _parseLines(rawValue)
+        .map((value) => value.raw.trim())
+        .where((value) => value.isNotEmpty)
+        .toList();
+    if (fallback.isNotEmpty) {
+      return fallback;
+    }
+    final trimmed = rawValue.trim();
+    return trimmed.isEmpty ? const [] : [trimmed];
   }
 
   BattleBoxDoc _updateSingle(BattleBoxDoc doc, String label, String value) {
@@ -320,11 +535,30 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
     required Map<String, Map<int, List<String>>> buckets,
     required String sectionKey,
     required int columnIndex,
-    required String value,
+    required List<String> values,
   }) {
     final byColumn = buckets.putIfAbsent(sectionKey, () => {});
-    final values = byColumn.putIfAbsent(columnIndex, () => []);
-    values.add(value);
+    final existing = byColumn.putIfAbsent(columnIndex, () => []);
+    for (final value in values) {
+      final trimmed = value.trim();
+      if (trimmed.isNotEmpty) {
+        existing.add(trimmed);
+      }
+    }
+  }
+
+  bool _isSuspiciousBalancedResult(
+    String template,
+    Map<String, String> values,
+  ) {
+    // Intentionally counts every pipe as a rough sanity heuristic.
+    // Nested templates can inflate this count, but false positives are acceptable
+    // because this only decides whether we fall back to the legacy parser.
+    final topLevelPipeCount = '|'.allMatches(template).length;
+    if (topLevelPipeCount < 4) {
+      return false;
+    }
+    return values.length < 2;
   }
 
   void _writeSingle(
