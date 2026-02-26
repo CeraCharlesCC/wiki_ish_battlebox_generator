@@ -5,6 +5,7 @@ import 'package:wiki_ish_battlebox_generator/src/battlebox/domain/entities/battl
 import 'package:wiki_ish_battlebox_generator/src/battlebox/domain/entities/column_model.dart';
 import 'package:wiki_ish_battlebox_generator/src/battlebox/domain/entities/rich_text_value.dart';
 import 'package:wiki_ish_battlebox_generator/src/battlebox/domain/entities/sections.dart';
+import 'package:wiki_ish_battlebox_generator/src/battlebox/domain/entities/wikitext_import_report.dart';
 import 'package:wiki_ish_battlebox_generator/src/battlebox/domain/services/battlebox_editor.dart';
 
 class FakeClock implements Clock {
@@ -229,23 +230,55 @@ void main() {
         expect(section.cells[0][0].raw, 'Army A');
       });
 
+      test('returns unchanged doc for negative index', () {
+        const report = WikitextImportReport(fields: {});
+        final originalLastEdited = clock.now();
+        final doc = createTestDoc().copyWith(
+          importReport: report,
+          lastEdited: originalLastEdited,
+        );
+
+        final result = editor.deleteBelligerentColumn(doc, -1);
+
+        expect(result, same(doc));
+        expect(result.lastEdited, originalLastEdited);
+        expect(result.importReport, same(report));
+      });
+
       test('returns unchanged doc if only one column remains', () {
+        const report = WikitextImportReport(fields: {});
+        final originalLastEdited = clock.now();
         var doc = createTestDoc();
         doc = editor.deleteBelligerentColumn(doc, 0);
+        doc = doc.copyWith(
+          importReport: report,
+          lastEdited: originalLastEdited,
+        );
 
         // Now try to delete the last column
         final result = editor.deleteBelligerentColumn(doc, 0);
 
         final section = result.sectionById('combatants') as MultiColumnSection;
         expect(section.columns.length, 1); // Should still have 1 column
+        expect(result, same(doc));
+        expect(result.lastEdited, originalLastEdited);
+        expect(result.importReport, same(report));
       });
 
       test('returns unchanged doc for out of bounds index', () {
-        final doc = createTestDoc();
+        const report = WikitextImportReport(fields: {});
+        final originalLastEdited = clock.now();
+        final doc = createTestDoc().copyWith(
+          importReport: report,
+          lastEdited: originalLastEdited,
+        );
         final result = editor.deleteBelligerentColumn(doc, 10);
 
         final section = result.sectionById('combatants') as MultiColumnSection;
         expect(section.columns.length, 2);
+        expect(result, same(doc));
+        expect(result.lastEdited, originalLastEdited);
+        expect(result.importReport, same(report));
       });
     });
 
@@ -293,6 +326,26 @@ void main() {
         expect(result.id, 'new_id');
         expect(result.title, 'New Battle');
         expect(result.lastEdited, clock.now());
+      });
+    });
+
+    group('import report lifecycle', () {
+      test('mutating edit clears importReport', () {
+        const report = WikitextImportReport(fields: {});
+        final doc = createTestDoc().copyWith(importReport: report);
+
+        final result = editor.setTitle(doc, 'Updated battle title');
+
+        expect(result.importReport, isNull);
+      });
+
+      test('no-op edit keeps importReport', () {
+        const report = WikitextImportReport(fields: {});
+        final doc = createTestDoc().copyWith(importReport: report);
+
+        final result = editor.updateListItem(doc, 'date', 99, 'Ignored');
+
+        expect(result.importReport, isNotNull);
       });
     });
   });

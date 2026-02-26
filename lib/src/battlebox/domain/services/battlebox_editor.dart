@@ -27,7 +27,8 @@ class BattleboxEditor {
 
   /// Updates the document title.
   BattleBoxDoc setTitle(BattleBoxDoc doc, String title) {
-    return doc.copyWith(title: title, lastEdited: _clock.now());
+    final updated = doc.copyWith(title: title, lastEdited: _clock.now());
+    return _clearImportReportIfPresent(updated);
   }
 
   /// Sets the value of a single-field section.
@@ -139,23 +140,32 @@ class BattleboxEditor {
         sections.add(section);
       }
     }
-    return doc.copyWith(sections: sections, lastEdited: _clock.now());
+    final updated = doc.copyWith(sections: sections, lastEdited: _clock.now());
+    return _clearImportReportIfPresent(updated);
   }
 
   /// Deletes a belligerent column from all multi-column sections.
   BattleBoxDoc deleteBelligerentColumn(BattleBoxDoc doc, int index) {
-    final firstMulti =
-        doc.sections.whereType<MultiColumnSection>().firstOrNull;
+    final multiSections = doc.sections.whereType<MultiColumnSection>().toList();
+    final firstMulti = multiSections.firstOrNull;
     if (firstMulti == null || firstMulti.columns.length <= 1) {
       return doc;
     }
+    if (index < 0 || index >= firstMulti.columns.length) {
+      return doc;
+    }
+    for (final section in multiSections) {
+      if (section.columns.length != firstMulti.columns.length) {
+        return doc;
+      }
+      if (index >= section.columns.length || index >= section.cells.length) {
+        return doc;
+      }
+    }
+
     final sections = <SectionModel>[];
     for (final section in doc.sections) {
       if (section is MultiColumnSection) {
-        if (index < 0 || index >= section.columns.length) {
-          sections.add(section);
-          continue;
-        }
         final columns = [...section.columns]..removeAt(index);
         final cells = _copyCells(section.cells)..removeAt(index);
         sections.add(section.copyWith(columns: columns, cells: cells));
@@ -163,7 +173,8 @@ class BattleboxEditor {
         sections.add(section);
       }
     }
-    return doc.copyWith(sections: sections, lastEdited: _clock.now());
+    final updated = doc.copyWith(sections: sections, lastEdited: _clock.now());
+    return _clearImportReportIfPresent(updated);
   }
 
   /// Updates the media section.
@@ -189,7 +200,8 @@ class BattleboxEditor {
         sections.add(section);
       }
     }
-    return doc.copyWith(sections: sections, lastEdited: _clock.now());
+    final updated = doc.copyWith(sections: sections, lastEdited: _clock.now());
+    return _clearImportReportIfPresent(updated);
   }
 
   BattleBoxDoc _replaceSection(
@@ -203,7 +215,15 @@ class BattleboxEditor {
       return doc;
     }
     sections[index] = updated;
-    return doc.copyWith(sections: sections, lastEdited: _clock.now());
+    final updatedDoc = doc.copyWith(sections: sections, lastEdited: _clock.now());
+    return _clearImportReportIfPresent(updatedDoc);
+  }
+
+  BattleBoxDoc _clearImportReportIfPresent(BattleBoxDoc doc) {
+    if (doc.importReport == null) {
+      return doc;
+    }
+    return doc.copyWith(importReport: null);
   }
 }
 
