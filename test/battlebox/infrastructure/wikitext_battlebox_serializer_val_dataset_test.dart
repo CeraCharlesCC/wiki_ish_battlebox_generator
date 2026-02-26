@@ -8,51 +8,74 @@ import 'package:wiki_ish_battlebox_generator/src/battlebox/infrastructure/serial
 
 void main() {
   late WikitextBattleboxSerializer serializer;
+  final skipReason = _missingFixtureSkipReason(const ['1.txt', '2.txt']);
 
   setUp(() {
     serializer = WikitextBattleboxSerializer();
   });
 
-  test('regression fixture 1 parses targeted fields with diagnostics', () {
-    final input = _readFixture('1.txt');
-    final doc = serializer.parse(input);
+  test(
+    'regression fixture 1 parses targeted fields with diagnostics',
+    () {
+      final input = _readFixture('1.txt');
+      final doc = serializer.parse(input);
 
-    _expectTargetedSectionMinimums(doc);
-    _expectNoPrimaryTemplateLeakage(doc);
-    _expectDiagnosticsQuality(doc);
-    _expectCoverageThresholds(
-      doc.importReport!,
-      expectedMinimums: const {
-        'combatant': 8,
-        'commander': 8,
-        'strength': 4,
-        'casualties': 4,
-      },
-    );
-  });
+      _expectTargetedSectionMinimums(doc);
+      _expectNoPrimaryTemplateLeakage(doc);
+      _expectDiagnosticsQuality(doc);
+      _expectCoverageThresholds(
+        doc.importReport!,
+        expectedMinimums: const {
+          'combatant': 8,
+          'commander': 8,
+          'strength': 4,
+          'casualties': 4,
+        },
+      );
+    },
+    skip: skipReason,
+  );
 
-  test('regression fixture 2 parses targeted fields with diagnostics', () {
-    final input = _readFixture('2.txt');
-    final doc = serializer.parse(input);
+  test(
+    'regression fixture 2 parses targeted fields with diagnostics',
+    () {
+      final input = _readFixture('2.txt');
+      final doc = serializer.parse(input);
 
-    _expectTargetedSectionMinimums(doc);
-    _expectNoPrimaryTemplateLeakage(doc);
-    _expectDiagnosticsQuality(doc);
+      _expectTargetedSectionMinimums(doc);
+      _expectNoPrimaryTemplateLeakage(doc);
+      _expectDiagnosticsQuality(doc);
 
-    final media = doc.sectionById('media') as MediaSection;
-    expect(media.imageUrl?.trim(), isNotEmpty);
-    expect(media.imageUrl!.toLowerCase(), isNot(contains('{{multiple image')));
+      final media = doc.sectionById('media') as MediaSection;
+      expect(media.imageUrl?.trim(), isNotEmpty);
+      expect(
+        media.imageUrl!.toLowerCase(),
+        isNot(contains('{{multiple image')),
+      );
 
-    _expectCoverageThresholds(
-      doc.importReport!,
-      expectedMinimums: const {
-        'combatant': 8,
-        'commander': 8,
-        'strength': 4,
-        'casualties': 8,
-      },
-    );
-  });
+      _expectCoverageThresholds(
+        doc.importReport!,
+        expectedMinimums: const {
+          'combatant': 8,
+          'commander': 8,
+          'strength': 4,
+          'casualties': 8,
+        },
+      );
+    },
+    skip: skipReason,
+  );
+}
+
+String? _missingFixtureSkipReason(List<String> names) {
+  final missing = names
+      .where((name) => !File('test_val_dataset/$name').existsSync())
+      .toList();
+  if (missing.isEmpty) {
+    return null;
+  }
+  return 'Optional val dataset fixture(s) missing: '
+      '${missing.join(', ')} (expected under test_val_dataset/).';
 }
 
 String _readFixture(String name) {
