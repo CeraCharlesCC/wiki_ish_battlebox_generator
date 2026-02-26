@@ -1,5 +1,20 @@
 import 'package:meta/meta.dart';
 
+bool wikitextStartsWithToken(String input, int start, String token) {
+  if (start + token.length > input.length) {
+    return false;
+  }
+  return input.substring(start, start + token.length) == token;
+}
+
+bool wikitextStartsWithTokenIgnoreCase(String input, int start, String token) {
+  if (start + token.length > input.length) {
+    return false;
+  }
+  return input.substring(start, start + token.length).toLowerCase() ==
+      token.toLowerCase();
+}
+
 @immutable
 class ScannerState {
   final int templateDepth;
@@ -27,6 +42,33 @@ class ScannerState {
       !inTagHeader;
 }
 
+enum _TopLevelCharAction { include, consume, stop }
+
+enum _MalformedRefTagBehavior { appendRemainderAndStop, returnNotFound }
+
+class _MutableScannerState {
+  int templateDepth = 0;
+  int wikiLinkDepth = 0;
+  int externalLinkDepth = 0;
+  bool inComment = false;
+  bool inRef = false;
+  bool inTagHeader = false;
+
+  bool get hasUnbalancedMarkers =>
+      templateDepth != 0 || inComment || inRef || inTagHeader;
+
+  ScannerState snapshot() {
+    return ScannerState(
+      templateDepth: templateDepth,
+      wikiLinkDepth: wikiLinkDepth,
+      externalLinkDepth: externalLinkDepth,
+      inComment: inComment,
+      inRef: inRef,
+      inTagHeader: inTagHeader,
+    );
+  }
+}
+
 class WikitextBalancedScanner {
   const WikitextBalancedScanner();
 
@@ -39,9 +81,11 @@ class WikitextBalancedScanner {
       throw const FormatException('Template opening token was not found.');
     }
 
-    final end = _findMatchingTemplateEnd(template, start);
+    final end = findClosingTemplate(template, start + 2);
     if (end == -1) {
-      throw const FormatException('Unbalanced template: closing token was not found.');
+      throw const FormatException(
+        'Unbalanced template: closing token was not found.',
+      );
     }
 
     final inner = template.substring(start + 2, end);
@@ -58,7 +102,9 @@ class WikitextBalancedScanner {
       final templateName = parts.first.trim().toLowerCase();
       final hint = templateNameHint.toLowerCase();
       if (!templateName.startsWith(hint)) {
-        throw FormatException('Unexpected template name: ${parts.first.trim()}');
+        throw FormatException(
+          'Unexpected template name: ${parts.first.trim()}',
+        );
       }
     }
 
@@ -85,80 +131,139 @@ class WikitextBalancedScanner {
   }) {
     final parts = <String>[];
     final buffer = StringBuffer();
+    _scanInput(
+      input,
+      buffer: buffer,
+      throwOnTemplateUnderflow: true,
+      throwOnUnbalancedMarkers: true,
+      malformedRefTagBehavior: _MalformedRefTagBehavior.appendRemainderAndStop,
+      onTopLevelChar: (state, index) {
+        if (isSeparator(state, index)) {
+          parts.add(buffer.toString());
+          buffer.clear();
+          return _TopLevelCharAction.consume;
+        }
+        return _TopLevelCharAction.include;
+      },
+    );
 
-    var templateDepth = 0;
-    var wikiLinkDepth = 0;
-    var externalLinkDepth = 0;
-    var inComment = false;
-    var inRef = false;
-    var inTagHeader = false;
+    parts.add(buffer.toString());
+    return parts;
+  }
+
+  int indexOfTopLevelEquals(String input) {
+    return _scanInput(
+      input,
+      malformedRefTagBehavior: _MalformedRefTagBehavior.returnNotFound,
+      onTopLevelChar: (state, index) {
+        if (state.isTopLevel && input[index] == '=') {
+          return _TopLevelCharAction.stop;
+        }
+        return _TopLevelCharAction.include;
+      },
+    );
+  }
+
+  int findClosingTemplate(String input, int start, {int initialDepth = 1}) {
+    var depth = initialDepth;
+    var i = start;
+    while (i < input.length - 1) {
+      if (wikitextStartsWithToken(input, i, '{{')) {
+        depth++;
+        i += 2;
+        continue;
+      }
+      if (wikitextStartsWithToken(input, i, '}}')) {
+        depth--;
+        if (depth == 0) {
+          return i;
+        }
+        if (depth < 0) {
+          throw const FormatException(
+            'Template depth underflow while finding end.',
+          );
+        }
+        i += 2;
+        continue;
+      }
+      i++;
+    }
+    return -1;
+  }
+
+  int _scanInput(
+    String input, {
+    StringBuffer? buffer,
+    required _TopLevelCharAction Function(ScannerState state, int index)
+    onTopLevelChar,
+    required _MalformedRefTagBehavior malformedRefTagBehavior,
+    bool throwOnTemplateUnderflow = false,
+    bool throwOnUnbalancedMarkers = false,
+  }) {
+    final state = _MutableScannerState();
     var i = 0;
 
-    ScannerState state() {
-      return ScannerState(
-        templateDepth: templateDepth,
-        wikiLinkDepth: wikiLinkDepth,
-        externalLinkDepth: externalLinkDepth,
-        inComment: inComment,
-        inRef: inRef,
-        inTagHeader: inTagHeader,
-      );
+    void writeText(String text) {
+      buffer?.write(text);
     }
 
     while (i < input.length) {
-      if (inComment) {
-        if (_startsWith(input, i, '-->')) {
-          buffer.write('-->');
-          inComment = false;
+      if (state.inComment) {
+        if (wikitextStartsWithToken(input, i, '-->')) {
+          writeText('-->');
+          state.inComment = false;
           i += 3;
           continue;
         }
-        buffer.write(input[i]);
+        writeText(input[i]);
         i++;
         continue;
       }
 
-      if (inRef) {
-        if (_startsWithIgnoreCase(input, i, '</ref>')) {
-          buffer.write(input.substring(i, i + 6));
-          inRef = false;
+      if (state.inRef) {
+        if (wikitextStartsWithTokenIgnoreCase(input, i, '</ref>')) {
+          writeText(input.substring(i, i + 6));
+          state.inRef = false;
           i += 6;
           continue;
         }
-        buffer.write(input[i]);
+        writeText(input[i]);
         i++;
         continue;
       }
 
-      if (inTagHeader) {
+      if (state.inTagHeader) {
         final char = input[i];
-        buffer.write(char);
+        writeText(char);
         if (char == '>') {
-          inTagHeader = false;
+          state.inTagHeader = false;
         }
         i++;
         continue;
       }
 
-      if (_startsWith(input, i, '<!--')) {
-        buffer.write('<!--');
-        inComment = true;
+      if (wikitextStartsWithToken(input, i, '<!--')) {
+        writeText('<!--');
+        state.inComment = true;
         i += 4;
         continue;
       }
 
-      if (_startsWithIgnoreCase(input, i, '<ref')) {
+      if (wikitextStartsWithTokenIgnoreCase(input, i, '<ref')) {
         final closing = input.indexOf('>', i + 1);
         if (closing == -1) {
-          buffer.write(input.substring(i));
-          i = input.length;
-          break;
+          if (malformedRefTagBehavior ==
+              _MalformedRefTagBehavior.appendRemainderAndStop) {
+            writeText(input.substring(i));
+            break;
+          }
+          return -1;
         }
         final tag = input.substring(i, closing + 1);
-        buffer.write(tag);
+        writeText(tag);
         final isSelfClosing = tag.trimRight().endsWith('/>');
         if (!isSelfClosing) {
-          inRef = true;
+          state.inRef = true;
         }
         i = closing + 1;
         continue;
@@ -166,221 +271,80 @@ class WikitextBalancedScanner {
 
       final char = input[i];
       if (char == '<') {
-        inTagHeader = true;
-        buffer.write(char);
+        state.inTagHeader = true;
+        writeText(char);
         i++;
         continue;
       }
 
-      if (_startsWith(input, i, '{{')) {
-        templateDepth++;
-        buffer.write('{{');
+      if (wikitextStartsWithToken(input, i, '{{')) {
+        state.templateDepth++;
+        writeText('{{');
         i += 2;
         continue;
       }
-      if (_startsWith(input, i, '}}')) {
-        if (templateDepth == 0) {
-          throw const FormatException('Template depth underflow while scanning input.');
+      if (wikitextStartsWithToken(input, i, '}}')) {
+        if (state.templateDepth == 0 && throwOnTemplateUnderflow) {
+          throw const FormatException(
+            'Template depth underflow while scanning input.',
+          );
         }
-        templateDepth--;
-        buffer.write('}}');
+        if (state.templateDepth > 0) {
+          state.templateDepth--;
+        }
+        writeText('}}');
         i += 2;
         continue;
       }
-      if (_startsWith(input, i, '[[')) {
-        wikiLinkDepth++;
-        buffer.write('[[');
+      if (wikitextStartsWithToken(input, i, '[[')) {
+        state.wikiLinkDepth++;
+        writeText('[[');
         i += 2;
         continue;
       }
-      if (_startsWith(input, i, ']]')) {
-        if (wikiLinkDepth > 0) {
-          wikiLinkDepth--;
+      if (wikitextStartsWithToken(input, i, ']]')) {
+        if (state.wikiLinkDepth > 0) {
+          state.wikiLinkDepth--;
         }
-        buffer.write(']]');
+        writeText(']]');
         i += 2;
         continue;
       }
-      if (char == '[' && !_startsWith(input, i, '[[')) {
-        if (wikiLinkDepth == 0) {
-          externalLinkDepth++;
+      if (char == '[' && !wikitextStartsWithToken(input, i, '[[')) {
+        if (state.wikiLinkDepth == 0) {
+          state.externalLinkDepth++;
         }
-        buffer.write(char);
+        writeText(char);
         i++;
         continue;
       }
-      if (char == ']' && externalLinkDepth > 0 && wikiLinkDepth == 0) {
-        externalLinkDepth--;
-        buffer.write(char);
-        i++;
-        continue;
-      }
-
-      if (isSeparator(state(), i)) {
-        parts.add(buffer.toString());
-        buffer.clear();
+      if (char == ']' &&
+          state.externalLinkDepth > 0 &&
+          state.wikiLinkDepth == 0) {
+        state.externalLinkDepth--;
+        writeText(char);
         i++;
         continue;
       }
 
-      buffer.write(char);
-      i++;
-    }
-
-    if (templateDepth != 0 || inComment || inRef || inTagHeader) {
-      throw const FormatException('Unbalanced markers detected while scanning input.');
-    }
-
-    parts.add(buffer.toString());
-    return parts;
-  }
-
-  int indexOfTopLevelEquals(String input) {
-    var templateDepth = 0;
-    var wikiLinkDepth = 0;
-    var externalLinkDepth = 0;
-    var inComment = false;
-    var inRef = false;
-    var inTagHeader = false;
-    var i = 0;
-
-    while (i < input.length) {
-      if (inComment) {
-        if (_startsWith(input, i, '-->')) {
-          inComment = false;
-          i += 3;
-          continue;
-        }
-        i++;
-        continue;
-      }
-      if (inRef) {
-        if (_startsWithIgnoreCase(input, i, '</ref>')) {
-          inRef = false;
-          i += 6;
-          continue;
-        }
-        i++;
-        continue;
-      }
-      if (inTagHeader) {
-        if (input[i] == '>') {
-          inTagHeader = false;
-        }
-        i++;
-        continue;
-      }
-
-      if (_startsWith(input, i, '<!--')) {
-        inComment = true;
-        i += 4;
-        continue;
-      }
-      if (_startsWithIgnoreCase(input, i, '<ref')) {
-        final closing = input.indexOf('>', i + 1);
-        if (closing == -1) {
-          return -1;
-        }
-        final tag = input.substring(i, closing + 1);
-        final isSelfClosing = tag.trimRight().endsWith('/>');
-        if (!isSelfClosing) {
-          inRef = true;
-        }
-        i = closing + 1;
-        continue;
-      }
-      if (input[i] == '<') {
-        inTagHeader = true;
-        i++;
-        continue;
-      }
-
-      if (_startsWith(input, i, '{{')) {
-        templateDepth++;
-        i += 2;
-        continue;
-      }
-      if (_startsWith(input, i, '}}')) {
-        if (templateDepth > 0) {
-          templateDepth--;
-        }
-        i += 2;
-        continue;
-      }
-      if (_startsWith(input, i, '[[')) {
-        wikiLinkDepth++;
-        i += 2;
-        continue;
-      }
-      if (_startsWith(input, i, ']]')) {
-        if (wikiLinkDepth > 0) {
-          wikiLinkDepth--;
-        }
-        i += 2;
-        continue;
-      }
-      if (input[i] == '[' && !_startsWith(input, i, '[[')) {
-        if (wikiLinkDepth == 0) {
-          externalLinkDepth++;
-        }
-        i++;
-        continue;
-      }
-      if (input[i] == ']' && externalLinkDepth > 0 && wikiLinkDepth == 0) {
-        externalLinkDepth--;
-        i++;
-        continue;
-      }
-
-      if (input[i] == '=' &&
-          templateDepth == 0 &&
-          wikiLinkDepth == 0 &&
-          externalLinkDepth == 0) {
+      final action = onTopLevelChar(state.snapshot(), i);
+      if (action == _TopLevelCharAction.stop) {
         return i;
       }
+      if (action == _TopLevelCharAction.consume) {
+        i++;
+        continue;
+      }
+
+      writeText(char);
       i++;
     }
 
-    return -1;
-  }
-
-  int _findMatchingTemplateEnd(String input, int startIndex) {
-    var depth = 0;
-    var i = startIndex;
-    while (i < input.length - 1) {
-      if (_startsWith(input, i, '{{')) {
-        depth++;
-        i += 2;
-        continue;
-      }
-      if (_startsWith(input, i, '}}')) {
-        depth--;
-        if (depth == 0) {
-          return i;
-        }
-        if (depth < 0) {
-          throw const FormatException('Template depth underflow while finding end.');
-        }
-        i += 2;
-        continue;
-      }
-      i++;
+    if (throwOnUnbalancedMarkers && state.hasUnbalancedMarkers) {
+      throw const FormatException(
+        'Unbalanced markers detected while scanning input.',
+      );
     }
     return -1;
-  }
-
-  bool _startsWith(String input, int start, String token) {
-    if (start + token.length > input.length) {
-      return false;
-    }
-    return input.substring(start, start + token.length) == token;
-  }
-
-  bool _startsWithIgnoreCase(String input, int start, String token) {
-    if (start + token.length > input.length) {
-      return false;
-    }
-    return input.substring(start, start + token.length).toLowerCase() ==
-        token.toLowerCase();
   }
 }

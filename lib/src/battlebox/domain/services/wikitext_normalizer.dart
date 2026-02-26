@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 
+import 'wikitext_balanced_scanner.dart';
 import 'wikitext_template_parser.dart';
 
 enum NormalizationMode { inlineText, listItem, media }
@@ -18,15 +19,16 @@ class NormalizationResult {
 }
 
 class WikitextNormalizer {
+  final WikitextBalancedScanner _scanner;
   final WikitextTemplateParser _templateParser;
 
-  const WikitextNormalizer({WikitextTemplateParser? templateParser})
-      : _templateParser = templateParser ?? const WikitextTemplateParser();
+  const WikitextNormalizer({
+    WikitextBalancedScanner? scanner,
+    WikitextTemplateParser? templateParser,
+  }) : _scanner = scanner ?? const WikitextBalancedScanner(),
+       _templateParser = templateParser ?? const WikitextTemplateParser();
 
-  NormalizationResult normalize(
-    String raw, {
-    required NormalizationMode mode,
-  }) {
+  NormalizationResult normalize(String raw, {required NormalizationMode mode}) {
     if (raw.trim().isEmpty) {
       return const NormalizationResult(normalizedText: '');
     }
@@ -71,7 +73,7 @@ class WikitextNormalizer {
       if (openIndex == -1) {
         break;
       }
-      final closeIndex = _findClosingTemplate(text, openIndex + 2);
+      final closeIndex = _scanner.findClosingTemplate(text, openIndex + 2);
       if (closeIndex == -1) {
         addFragment(
           text.substring(openIndex),
@@ -102,7 +104,8 @@ class WikitextNormalizer {
   String _normalizeTemplate(
     String rawTemplate, {
     required NormalizationMode mode,
-    required void Function(String fragment, {String? offendingToken}) addFragment,
+    required void Function(String fragment, {String? offendingToken})
+    addFragment,
   }) {
     final parsed = _templateParser.parse(rawTemplate);
     if (parsed == null) {
@@ -123,15 +126,9 @@ class WikitextNormalizer {
         final items = _extractListItems(normalizedName, parsed);
         final normalizedItems = <String>[];
         for (final item in items) {
-          final nested = normalize(
-            item,
-            mode: NormalizationMode.inlineText,
-          );
+          final nested = normalize(item, mode: NormalizationMode.inlineText);
           for (final fragment in nested.unparsedFragments) {
-            addFragment(
-              fragment,
-              offendingToken: nested.firstOffendingToken,
-            );
+            addFragment(fragment, offendingToken: nested.firstOffendingToken);
           }
           final value = nested.normalizedText.trim();
           if (value.isNotEmpty) {
@@ -162,10 +159,7 @@ class WikitextNormalizer {
           mode: NormalizationMode.inlineText,
         );
         for (final fragment in nested.unparsedFragments) {
-          addFragment(
-            fragment,
-            offendingToken: nested.firstOffendingToken,
-          );
+          addFragment(fragment, offendingToken: nested.firstOffendingToken);
         }
         return nested.normalizedText;
       case 'flagicon':
@@ -178,7 +172,7 @@ class WikitextNormalizer {
       case 'flagdeco':
         return _extractFlagText(parsed);
       case 'multiple image':
-        return _extractFirstImage(parsed) ?? '';
+        return parsed.firstImageValue ?? '';
       default:
         addFragment(rawTemplate, offendingToken: parsed.templateName.trim());
         return '';
@@ -200,7 +194,9 @@ class WikitextNormalizer {
       items.add(value);
     }
 
-    if (name == 'plainlist' || name == 'plain list' || name == 'indented plainlist') {
+    if (name == 'plainlist' ||
+        name == 'plain list' ||
+        name == 'indented plainlist') {
       final combined = parsed.unnamedParams.join('\n');
       if (combined.trim().isNotEmpty) {
         for (final line in combined.split('\n')) {
@@ -241,25 +237,6 @@ class WikitextNormalizer {
     return parsed.unnamedParams.first.trim();
   }
 
-  String? _extractFirstImage(ParsedTemplateInvocation parsed) {
-    for (var index = 1; index <= 9; index++) {
-      final key = 'image$index';
-      final value = parsed.namedParams[key]?.trim();
-      if (value != null && value.isNotEmpty) {
-        return value;
-      }
-    }
-
-    for (final value in parsed.unnamedParams) {
-      final trimmed = value.trim();
-      if (trimmed.isNotEmpty) {
-        return trimmed;
-      }
-    }
-
-    return null;
-  }
-
   String _cleanupWhitespace(String input) {
     final normalizedNewlines = input
         .replaceAll(RegExp(r'\n{3,}'), '\n\n')
@@ -269,29 +246,5 @@ class WikitextNormalizer {
 
   String _normalizeName(String value) {
     return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
-  }
-
-  int _findClosingTemplate(String input, int start) {
-    var depth = 1;
-    var i = start;
-
-    while (i < input.length - 1) {
-      if (input.substring(i, i + 2) == '{{') {
-        depth++;
-        i += 2;
-        continue;
-      }
-      if (input.substring(i, i + 2) == '}}') {
-        depth--;
-        if (depth == 0) {
-          return i;
-        }
-        i += 2;
-        continue;
-      }
-      i++;
-    }
-
-    return -1;
   }
 }

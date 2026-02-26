@@ -15,13 +15,29 @@ class ParsedTemplateInvocation {
     required this.namedParams,
     required this.unnamedParams,
   });
+
+  String? get firstImageValue {
+    for (var index = 1; index <= 9; index++) {
+      final value = namedParams['image$index']?.trim();
+      if (value != null && value.isNotEmpty) {
+        return value;
+      }
+    }
+    for (final value in unnamedParams) {
+      final trimmed = value.trim();
+      if (trimmed.isNotEmpty) {
+        return trimmed;
+      }
+    }
+    return null;
+  }
 }
 
 class WikitextTemplateParser {
   final WikitextBalancedScanner _scanner;
 
   const WikitextTemplateParser({WikitextBalancedScanner? scanner})
-      : _scanner = scanner ?? const WikitextBalancedScanner();
+    : _scanner = scanner ?? const WikitextBalancedScanner();
 
   ParsedTemplateInvocation? parse(String rawTemplate) {
     final trimmed = rawTemplate.trim();

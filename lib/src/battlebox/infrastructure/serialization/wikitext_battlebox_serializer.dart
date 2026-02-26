@@ -21,9 +21,9 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
     IdGenerator? idGenerator,
     WikitextBalancedScanner? balancedScanner,
     WikitextFieldExtractors? fieldExtractors,
-  })  : _idGenerator = idGenerator ?? const TimestampIdGenerator(),
-        _balancedScanner = balancedScanner ?? const WikitextBalancedScanner(),
-        _fieldExtractors = fieldExtractors ?? const WikitextFieldExtractors();
+  }) : _idGenerator = idGenerator ?? const TimestampIdGenerator(),
+       _balancedScanner = balancedScanner ?? const WikitextBalancedScanner(),
+       _fieldExtractors = fieldExtractors ?? const WikitextFieldExtractors();
 
   @override
   BattleBoxDoc parse(String input) {
@@ -38,7 +38,9 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
     try {
       keyValues = _parseKeyValuesBalanced(template);
       if (_isSuspiciousBalancedResult(template, keyValues)) {
-        throw const FormatException('Balanced parser produced too few infobox fields.');
+        throw const FormatException(
+          'Balanced parser produced too few infobox fields.',
+        );
       }
     } on FormatException catch (error) {
       keyValues = _parseKeyValuesLegacy(template);
@@ -51,10 +53,7 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
       );
     }
 
-    return _buildDocFromKeyValues(
-      keyValues,
-      topLevelReport: topLevelReport,
-    );
+    return _buildDocFromKeyValues(keyValues, topLevelReport: topLevelReport);
   }
 
   @override
@@ -107,7 +106,7 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
 
     while (i < input.length) {
       if (inComment) {
-        if (_startsWith(input, i, '-->')) {
+        if (wikitextStartsWithToken(input, i, '-->')) {
           inComment = false;
           i += 3;
           continue;
@@ -117,7 +116,7 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
       }
 
       if (inRef) {
-        if (_startsWithIgnoreCase(input, i, '</ref>')) {
+        if (wikitextStartsWithTokenIgnoreCase(input, i, '</ref>')) {
           inRef = false;
           i += 6;
           continue;
@@ -134,13 +133,13 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
         continue;
       }
 
-      if (_startsWith(input, i, '<!--')) {
+      if (wikitextStartsWithToken(input, i, '<!--')) {
         inComment = true;
         i += 4;
         continue;
       }
 
-      if (_startsWithIgnoreCase(input, i, '<ref')) {
+      if (wikitextStartsWithTokenIgnoreCase(input, i, '<ref')) {
         final closing = input.indexOf('>', i + 1);
         if (closing == -1) {
           return null;
@@ -160,13 +159,13 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
         continue;
       }
 
-      if (_startsWith(input, i, '{{')) {
+      if (wikitextStartsWithToken(input, i, '{{')) {
         depth++;
         i += 2;
         continue;
       }
 
-      if (_startsWith(input, i, '}}')) {
+      if (wikitextStartsWithToken(input, i, '}}')) {
         depth--;
         if (depth == 0) {
           return input.substring(startIndex, i + 2);
@@ -227,7 +226,9 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
           (nestedTemplateDepth == 0 &&
               leftTrim.startsWith('|') &&
               leftTrim.contains('='));
-      if (isTopLevelKeyValue && leftTrim.startsWith('|') && leftTrim.contains('=')) {
+      if (isTopLevelKeyValue &&
+          leftTrim.startsWith('|') &&
+          leftTrim.contains('=')) {
         flush();
         final eqIndex = leftTrim.indexOf('=');
         final rawKey = leftTrim.substring(1, eqIndex).trim();
@@ -306,7 +307,10 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
               ? extraction.items.first
               : value;
           updated = _updateMedia(updated, lowerKey, imageValue);
-          fieldReports[normalizedKey] = _toFieldReport(normalizedKey, extraction);
+          fieldReports[normalizedKey] = _toFieldReport(
+            normalizedKey,
+            extraction,
+          );
           break;
         case 'caption':
         case 'image_size':
@@ -323,7 +327,10 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
           };
           if (multiSectionKeys.contains(lowerKey)) {
             maxIndex = maxIndex < 1 ? 1 : maxIndex;
-            final extraction = _extractForSection(sectionKey: lowerKey, raw: value);
+            final extraction = _extractForSection(
+              sectionKey: lowerKey,
+              raw: value,
+            );
             final items = _bestEffortItems(extraction.items, value);
             _appendMultiValue(
               buckets: multiBuckets,
@@ -332,13 +339,17 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
               values: items,
             );
             if (_isTargetedReportSection(lowerKey)) {
-              fieldReports[normalizedKey] = _toFieldReport(normalizedKey, extraction);
+              fieldReports[normalizedKey] = _toFieldReport(
+                normalizedKey,
+                extraction,
+              );
             }
             break;
           }
 
-          final match = RegExp(r'^(combatant|commander|units|strength|casualties)(\d+)([a-z]+)?$')
-              .firstMatch(lowerKey);
+          final match = RegExp(
+            r'^(combatant|commander|units|strength|casualties)(\d+)([a-z]+)?$',
+          ).firstMatch(lowerKey);
           if (match != null) {
             final sectionKey = match.group(1)!;
             final index = int.tryParse(match.group(2) ?? '') ?? 0;
@@ -356,8 +367,10 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
                 values: items,
               );
               if (_isTargetedReportSection(sectionKey)) {
-                fieldReports[normalizedKey] =
-                    _toFieldReport(normalizedKey, extraction);
+                fieldReports[normalizedKey] = _toFieldReport(
+                  normalizedKey,
+                  extraction,
+                );
               }
             }
           } else {
@@ -682,21 +695,6 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
 
     parts.add(buffer.toString());
     return parts;
-  }
-
-  bool _startsWith(String input, int start, String token) {
-    if (start + token.length > input.length) {
-      return false;
-    }
-    return input.substring(start, start + token.length) == token;
-  }
-
-  bool _startsWithIgnoreCase(String input, int start, String token) {
-    if (start + token.length > input.length) {
-      return false;
-    }
-    return input.substring(start, start + token.length).toLowerCase() ==
-        token.toLowerCase();
   }
 
   String _multiKeyForLabel(String label) {

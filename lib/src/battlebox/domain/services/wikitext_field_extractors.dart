@@ -39,9 +39,9 @@ class WikitextFieldExtractors {
     WikitextNormalizer? normalizer,
     WikitextBalancedScanner? scanner,
     WikitextTemplateParser? templateParser,
-  })  : _normalizer = normalizer ?? const WikitextNormalizer(),
-        _scanner = scanner ?? const WikitextBalancedScanner(),
-        _templateParser = templateParser ?? const WikitextTemplateParser();
+  }) : _normalizer = normalizer ?? const WikitextNormalizer(),
+       _scanner = scanner ?? const WikitextBalancedScanner(),
+       _templateParser = templateParser ?? const WikitextTemplateParser();
 
   FieldExtractionResult extractCombatant(String raw) {
     return _extractListField(raw, family: FieldFamily.combatant);
@@ -75,13 +75,13 @@ class WikitextFieldExtractors {
 
     final trimmed = raw.trim();
     if (trimmed.startsWith('{{')) {
-      final close = _findClosingTemplate(trimmed, 2);
+      final close = _scanner.findClosingTemplate(trimmed, 2);
       if (close != -1) {
         final token = trimmed.substring(0, close + 2);
         final parsed = _templateParser.parse(token);
         if (parsed != null &&
             _normalizeTemplateName(parsed.templateName) == 'multiple image') {
-          image = _extractFirstImageFromParsedTemplate(parsed);
+          image = parsed.firstImageValue;
           final remainder = trimmed.substring(close + 2).trim();
           if (remainder.isNotEmpty) {
             fragments.add(remainder);
@@ -92,8 +92,10 @@ class WikitextFieldExtractors {
     }
 
     if (image == null || image.trim().isEmpty) {
-      final normalized =
-          _normalizer.normalize(raw, mode: NormalizationMode.media);
+      final normalized = _normalizer.normalize(
+        raw,
+        mode: NormalizationMode.media,
+      );
       fragments.addAll(normalized.unparsedFragments);
       firstOffendingToken ??= normalized.firstOffendingToken;
 
@@ -129,13 +131,18 @@ class WikitextFieldExtractors {
       );
     }
 
-    final normalized = _normalizer.normalize(raw, mode: NormalizationMode.listItem);
+    final normalized = _normalizer.normalize(
+      raw,
+      mode: NormalizationMode.listItem,
+    );
     final fragments = <String>[...normalized.unparsedFragments];
     var firstOffendingToken = normalized.firstOffendingToken;
 
     List<String> items;
     try {
-      final normalizedForSplit = _normalizeSeparators(normalized.normalizedText);
+      final normalizedForSplit = _normalizeSeparators(
+        normalized.normalizedText,
+      );
       final segments = _scanner.splitTopLevel(
         normalizedForSplit,
         isSeparator: (state, index) =>
@@ -165,9 +172,9 @@ class WikitextFieldExtractors {
 
   String _normalizeSeparators(String input) {
     return input
-      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-      .replaceAll(RegExp(r'<hr\s*/?>', caseSensitive: false), '\n')
-      .replaceAll(RegExp(r'\{\{\s*hr\s*\}\}', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'<hr\s*/?>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'\{\{\s*hr\s*\}\}', caseSensitive: false), '\n')
         .replaceAll('----', '\n');
   }
 
@@ -218,45 +225,5 @@ class WikitextFieldExtractors {
 
   String _normalizeTemplateName(String value) {
     return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
-  }
-
-  String? _extractFirstImageFromParsedTemplate(ParsedTemplateInvocation parsed) {
-    for (var index = 1; index <= 9; index++) {
-      final value = parsed.namedParams['image$index']?.trim();
-      if (value != null && value.isNotEmpty) {
-        return value;
-      }
-    }
-    for (final value in parsed.unnamedParams) {
-      final trimmed = value.trim();
-      if (trimmed.isNotEmpty) {
-        return trimmed;
-      }
-    }
-    return null;
-  }
-
-  int _findClosingTemplate(String input, int start) {
-    var depth = 1;
-    var i = start;
-
-    while (i < input.length - 1) {
-      if (input.substring(i, i + 2) == '{{') {
-        depth++;
-        i += 2;
-        continue;
-      }
-      if (input.substring(i, i + 2) == '}}') {
-        depth--;
-        if (depth == 0) {
-          return i;
-        }
-        i += 2;
-        continue;
-      }
-      i++;
-    }
-
-    return -1;
   }
 }
