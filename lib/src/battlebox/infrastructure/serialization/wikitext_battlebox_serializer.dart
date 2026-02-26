@@ -551,6 +551,9 @@ class WikitextBattleboxSerializer implements BattleboxSerializer {
     String template,
     Map<String, String> values,
   ) {
+    // Intentionally counts every pipe as a rough sanity heuristic.
+    // Nested templates can inflate this count, but false positives are acceptable
+    // because this only decides whether we fall back to the legacy parser.
     final topLevelPipeCount = '|'.allMatches(template).length;
     if (topLevelPipeCount < 4) {
       return false;

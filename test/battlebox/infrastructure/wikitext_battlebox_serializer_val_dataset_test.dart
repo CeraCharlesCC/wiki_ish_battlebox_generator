@@ -56,7 +56,18 @@ void main() {
 }
 
 String _readFixture(String name) {
-  return File('test_val_dataset/$name').readAsStringSync();
+  // These fixtures are intentionally not redistributed in this repository due to
+  // licensing constraints. Recreate them locally from Wikipedia page sources:
+  // - test_val_dataset/1.txt: Gulf War
+  // - test_val_dataset/2.txt: Thirty Years' War
+  final file = File('test_val_dataset/$name');
+  if (!file.existsSync()) {
+    throw TestFailure(
+      'Missing fixture ${file.path}. '
+      'Create it locally from the corresponding Wikipedia page source.',
+    );
+  }
+  return file.readAsStringSync();
 }
 
 void _expectTargetedSectionMinimums(BattleBoxDoc doc) {
@@ -72,14 +83,15 @@ void _expectTargetedSectionMinimums(BattleBoxDoc doc) {
   expect(_countNonEmpty(commanders, 1), greaterThanOrEqualTo(3));
 
   expect(
-    strength.cells.asMap().keys.any((index) => _countNonEmpty(strength, index) >= 2),
+    strength.cells.asMap().keys.any(
+      (index) => _countNonEmpty(strength, index) >= 2,
+    ),
     isTrue,
   );
   expect(
-    casualties.cells
-        .asMap()
-        .keys
-        .any((index) => _countNonEmpty(casualties, index) >= 2),
+    casualties.cells.asMap().keys.any(
+      (index) => _countNonEmpty(casualties, index) >= 2,
+    ),
     isTrue,
   );
 }
@@ -175,5 +187,7 @@ int _countNonEmpty(MultiColumnSection section, int index) {
   if (index < 0 || index >= section.cells.length) {
     return 0;
   }
-  return section.cells[index].where((value) => value.raw.trim().isNotEmpty).length;
+  return section.cells[index]
+      .where((value) => value.raw.trim().isNotEmpty)
+      .length;
 }
