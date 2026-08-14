@@ -91,4 +91,34 @@ void main() {
     expect(find.text('Unparsed fragments'), findsOneWidget);
     expect(find.textContaining('{{UnknownTemplate|value=1}}'), findsOneWidget);
   });
+
+  testWidgets('wikitext panel shows image export progress', (tester) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: WikitextPanel(
+              controller: controller,
+              onImport: () {},
+              onExport: () {},
+              onCopy: () {},
+              onExportImage: () {},
+              isExporting: true,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Exporting...'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    final button = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Exporting...'),
+    );
+    expect(button.onPressed, isNull);
+  });
 }

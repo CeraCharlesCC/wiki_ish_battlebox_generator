@@ -423,8 +423,13 @@ class WikitextPanel extends ConsumerWidget {
                     ),
                     OutlinedButton.icon(
                       onPressed: isExporting ? null : onExportImage,
-                      icon: const Icon(Icons.image_outlined),
-                      label: const Text('Export Image'),
+                      icon: isExporting
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.image_outlined),
+                      label: Text(isExporting ? 'Exporting...' : 'Export Image'),
                     ),
                     FilledButton.icon(
                       onPressed: onCopy,

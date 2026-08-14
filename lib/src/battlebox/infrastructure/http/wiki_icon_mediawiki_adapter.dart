@@ -27,7 +27,7 @@ class WikiIconMediawikiAdapter implements WikiIconGateway {
     required String code,
     required int widthPx,
     String? hostOverride,
-  }) {
+  }) async {
     final host = _resolveHost(templateName, hostOverride);
     final cacheKey = _CacheKey(
       host: host,
@@ -36,7 +36,7 @@ class WikiIconMediawikiAdapter implements WikiIconGateway {
       width: widthPx,
     );
     if (_cache.containsKey(cacheKey)) {
-      return Future.value(_cache[cacheKey]);
+      return _cache[cacheKey];
     }
     final existing = _pending[cacheKey];
     if (existing != null) {
@@ -49,11 +49,13 @@ class WikiIconMediawikiAdapter implements WikiIconGateway {
       widthPx: widthPx,
     );
     _pending[cacheKey] = future;
-    return future.then((value) {
-      _pending.remove(cacheKey);
+    try {
+      final value = await future;
       _cache[cacheKey] = value;
       return value;
-    });
+    } finally {
+      _pending.remove(cacheKey);
+    }
   }
 
   @override
