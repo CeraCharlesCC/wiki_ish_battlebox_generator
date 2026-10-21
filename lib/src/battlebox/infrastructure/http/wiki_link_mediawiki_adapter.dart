@@ -11,41 +11,51 @@ class _ResolveCacheEntry {
 
   const _ResolveCacheEntry(this.result, this.timestamp);
 
-  bool isExpired(Duration ttl) =>
-      DateTime.now().difference(timestamp) > ttl;
+  bool isExpired(Duration ttl, DateTime now) => now.difference(timestamp) > ttl;
 }
 
 /// Cache entry for SiteMatrix data.
 class _SiteMatrixCacheEntry {
   final Map<String, String> langToHost;
   final DateTime timestamp;
+  final bool isFallback;
 
-  const _SiteMatrixCacheEntry(this.langToHost, this.timestamp);
+  const _SiteMatrixCacheEntry(
+    this.langToHost,
+    this.timestamp, {
+    this.isFallback = false,
+  });
 
-  bool isExpired(Duration ttl) =>
-      DateTime.now().difference(timestamp) > ttl;
+  bool isExpired(Duration ttl, DateTime now) => now.difference(timestamp) > ttl;
 }
 
 /// MediaWiki API implementation of WikiLinkGateway.
 class WikiLinkMediawikiAdapter implements WikiLinkGateway {
-  WikiLinkMediawikiAdapter({http.Client? client})
-      : _client = client ?? http.Client();
+  WikiLinkMediawikiAdapter({http.Client? client, DateTime Function()? now})
+    : _client = client ?? http.Client(),
+      _ownsClient = client == null,
+      _now = now ?? DateTime.now;
 
   final http.Client _client;
+  final bool _ownsClient;
+  final DateTime Function() _now;
 
   static const String _userAgent =
       'BattleboxGenerator/0.1 (contact: https://github.com/ceracharlescc/)';
 
   // Cache TTLs
   static const Duration _siteMatrixTtl = Duration(days: 7);
-  static const Duration _resolveTtl = Duration(days: 30);
-  static const Duration _negativeCacheTtl = Duration(days: 1);
+  // An outage must not keep the reduced language list for a whole week.
+  static const Duration _siteMatrixFallbackTtl = Duration(minutes: 5);
+  static const Duration _resolveTtl = Duration(days: 7);
+  static const Duration _negativeCacheTtl = Duration(hours: 1);
 
   // Maximum number of language candidates to probe
   static const int _maxProbeCount = 5;
 
   // Caches
   _SiteMatrixCacheEntry? _siteMatrixCache;
+  Future<Map<String, String>>? _pendingSiteMatrix;
   final Map<String, _ResolveCacheEntry> _resolveCache = {};
   final Map<String, Future<ResolvedWikiLink?>> _pending = {};
 
@@ -60,13 +70,13 @@ class WikiLinkMediawikiAdapter implements WikiLinkGateway {
       return null;
     }
 
-    final cacheKey = _makeCacheKey(rawTarget, forcedLang);
+    final cacheKey = _makeCacheKey(rawTarget, forcedLang, defaultLang);
 
     // Check cache first
     final cached = _resolveCache[cacheKey];
     if (cached != null) {
       final ttl = cached.result == null ? _negativeCacheTtl : _resolveTtl;
-      if (!cached.isExpired(ttl)) {
+      if (!cached.isExpired(ttl, _now())) {
         return _addFragment(cached.result, fragment);
       }
     }
@@ -88,7 +98,10 @@ class WikiLinkMediawikiAdapter implements WikiLinkGateway {
 
     try {
       final result = await future;
-      _resolveCache[cacheKey] = _ResolveCacheEntry(result, DateTime.now());
+      if (_resolveCache.length >= 1024) {
+        _resolveCache.remove(_resolveCache.keys.first);
+      }
+      _resolveCache[cacheKey] = _ResolveCacheEntry(result, _now());
       return _addFragment(result, fragment);
     } finally {
       _pending.remove(cacheKey);
@@ -114,11 +127,30 @@ class WikiLinkMediawikiAdapter implements WikiLinkGateway {
 
   @override
   Future<Map<String, String>> fetchSiteMatrix() async {
-    // Check cache
-    if (_siteMatrixCache != null && !_siteMatrixCache!.isExpired(_siteMatrixTtl)) {
-      return _siteMatrixCache!.langToHost;
+    final cached = _siteMatrixCache;
+    if (cached != null &&
+        !cached.isExpired(
+          cached.isFallback ? _siteMatrixFallbackTtl : _siteMatrixTtl,
+          _now(),
+        )) {
+      return cached.langToHost;
     }
 
+    // Different link targets have different resolve() keys. Without a shared
+    // in-flight SiteMatrix request they can all fetch (and retry) Meta at once.
+    final pending = _pendingSiteMatrix;
+    if (pending != null) return pending;
+
+    final future = _loadSiteMatrix();
+    _pendingSiteMatrix = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_pendingSiteMatrix, future)) _pendingSiteMatrix = null;
+    }
+  }
+
+  Future<Map<String, String>> _loadSiteMatrix() async {
     final uri = Uri.https('meta.wikimedia.org', '/w/api.php', {
       'action': 'sitematrix',
       'format': 'json',
@@ -130,23 +162,16 @@ class WikiLinkMediawikiAdapter implements WikiLinkGateway {
     });
 
     try {
-      final resp = await _client.get(
-        uri,
-        headers: {'Api-User-Agent': _userAgent},
-      );
-
-      if (resp.statusCode != 200) {
-        return _getFallbackSiteMatrix();
-      }
+      final resp = await _get(uri);
 
       final decoded = jsonDecode(resp.body);
       if (decoded is! Map<String, dynamic>) {
-        return _getFallbackSiteMatrix();
+        return _cacheFallbackSiteMatrix();
       }
 
       final sitematrix = decoded['sitematrix'];
       if (sitematrix is! Map<String, dynamic>) {
-        return _getFallbackSiteMatrix();
+        return _cacheFallbackSiteMatrix();
       }
 
       final langToHost = <String, String>{};
@@ -176,16 +201,48 @@ class WikiLinkMediawikiAdapter implements WikiLinkGateway {
         }
       }
 
-      _siteMatrixCache = _SiteMatrixCacheEntry(langToHost, DateTime.now());
+      if (langToHost.isEmpty) return _cacheFallbackSiteMatrix();
+      _siteMatrixCache = _SiteMatrixCacheEntry(langToHost, _now());
       return langToHost;
     } catch (_) {
-      return _getFallbackSiteMatrix();
+      return _cacheFallbackSiteMatrix();
     }
+  }
+
+  Map<String, String> _cacheFallbackSiteMatrix() {
+    final fallback = _getFallbackSiteMatrix();
+    _siteMatrixCache = _SiteMatrixCacheEntry(
+      fallback,
+      _now(),
+      isFallback: true,
+    );
+    return fallback;
   }
 
   @override
   void dispose() {
-    _client.close();
+    if (_ownsClient) _client.close();
+  }
+
+  /// Throws for transient request failures, so they cannot be cached as
+  /// definite 'page missing' results and painted as redlinks.
+  Future<http.Response> _get(Uri uri) async {
+    Object? failure;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await _client
+            .get(uri, headers: {'Api-User-Agent': _userAgent})
+            .timeout(const Duration(seconds: 8));
+        if (response.statusCode == 200) return response;
+        failure = StateError(
+          'MediaWiki request returned HTTP ${response.statusCode}',
+        );
+        if (response.statusCode != 429 && response.statusCode < 500) break;
+      } catch (error) {
+        failure = error;
+      }
+    }
+    throw StateError('Unable to verify Wikipedia page: $failure');
   }
 
   Map<String, String> _getFallbackSiteMatrix() {
@@ -229,12 +286,21 @@ class WikiLinkMediawikiAdapter implements WikiLinkGateway {
       }
     }
 
+    Object? requestFailure;
     for (final lang in candidates) {
       final host = siteMatrix[lang]!;
-      final result = await _probeTitle(rawTarget, host, lang);
-      if (result != null) {
-        return result;
+      try {
+        final result = await _probeTitle(rawTarget, host, lang);
+        if (result != null) return result;
+      } catch (error) {
+        requestFailure ??= error;
       }
+    }
+
+    if (requestFailure != null) {
+      throw StateError(
+        'Wikipedia availability could not be verified: $requestFailure',
+      );
     }
 
     return null;
@@ -256,64 +322,53 @@ class WikiLinkMediawikiAdapter implements WikiLinkGateway {
       'redirects': '1',
     });
 
-    try {
-      final resp = await _client.get(
-        uri,
-        headers: {'Api-User-Agent': _userAgent},
-      );
+    final resp = await _get(uri);
 
-      if (resp.statusCode != 200) {
-        return null;
-      }
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Unexpected MediaWiki response');
+    }
 
-      final decoded = jsonDecode(resp.body);
-      if (decoded is! Map<String, dynamic>) {
-        return null;
-      }
+    final query = decoded['query'];
+    if (query is! Map<String, dynamic>) {
+      throw const FormatException('Missing query in MediaWiki response');
+    }
 
-      final query = decoded['query'];
-      if (query is! Map<String, dynamic>) {
-        return null;
-      }
+    final redirects = query['redirects'];
+    final wasRedirect = redirects is List && redirects.isNotEmpty;
 
-      final redirects = query['redirects'];
-      final wasRedirect = redirects is List && redirects.isNotEmpty;
+    final pages = query['pages'];
+    if (pages is! List || pages.isEmpty) {
+      throw const FormatException('Missing pages in MediaWiki response');
+    }
 
-      final pages = query['pages'];
-      if (pages is! List || pages.isEmpty) {
-        return null;
-      }
+    final page = pages.first;
+    if (page is! Map<String, dynamic>) {
+      throw const FormatException('Malformed page in MediaWiki response');
+    }
 
-      final page = pages.first;
-      if (page is! Map<String, dynamic>) {
-        return null;
-      }
-
-      if (page['missing'] == true) {
-        return null;
-      }
-
-      final pageId = page['pageid'];
-      final canonicalUrl = page['canonicalurl'];
-      final fullUrl = page['fullurl'];
-      final resolvedTitle = page['title'];
-
-      if (fullUrl is! String) {
-        return null;
-      }
-
-      return ResolvedWikiLink(
-        canonicalUrl: canonicalUrl is String ? canonicalUrl : null,
-        fullUrl: fullUrl,
-        wikiHost: host,
-        langCode: langCode,
-        pageId: pageId is int ? pageId : null,
-        resolvedTitle: resolvedTitle is String ? resolvedTitle : null,
-        wasRedirect: wasRedirect,
-      );
-    } catch (_) {
+    if (page['missing'] == true) {
       return null;
     }
+
+    final pageId = page['pageid'];
+    final canonicalUrl = page['canonicalurl'];
+    final fullUrl = page['fullurl'];
+    final resolvedTitle = page['title'];
+
+    if (fullUrl is! String) {
+      throw const FormatException('No page URL in MediaWiki response');
+    }
+
+    return ResolvedWikiLink(
+      canonicalUrl: canonicalUrl is String ? canonicalUrl : null,
+      fullUrl: fullUrl,
+      wikiHost: host,
+      langCode: langCode,
+      pageId: pageId is int ? pageId : null,
+      resolvedTitle: resolvedTitle is String ? resolvedTitle : null,
+      wasRedirect: wasRedirect,
+    );
   }
 
   String? _detectPrimaryLanguage(String text) {
@@ -410,8 +465,12 @@ class WikiLinkMediawikiAdapter implements WikiLinkGateway {
     return candidates;
   }
 
-  String _makeCacheKey(String rawTarget, String? forcedLang) {
-    return forcedLang != null ? '$forcedLang:$rawTarget' : rawTarget;
+  String _makeCacheKey(
+    String rawTarget,
+    String? forcedLang,
+    String defaultLang,
+  ) {
+    return '${forcedLang ?? ''}|$defaultLang|$rawTarget';
   }
 
   ResolvedWikiLink? _addFragment(ResolvedWikiLink? result, String? fragment) {
@@ -435,8 +494,7 @@ class WikiLinkMediawikiAdapter implements WikiLinkGateway {
 
   // Unicode range checks
   bool _isKana(int rune) =>
-      (rune >= 0x3040 && rune <= 0x309F) ||
-      (rune >= 0x30A0 && rune <= 0x30FF);
+      (rune >= 0x3040 && rune <= 0x309F) || (rune >= 0x30A0 && rune <= 0x30FF);
 
   bool _isHan(int rune) =>
       (rune >= 0x4E00 && rune <= 0x9FFF) ||
@@ -444,13 +502,10 @@ class WikiLinkMediawikiAdapter implements WikiLinkGateway {
       (rune >= 0x20000 && rune <= 0x2A6DF);
 
   bool _isHangul(int rune) =>
-      (rune >= 0xAC00 && rune <= 0xD7AF) ||
-      (rune >= 0x1100 && rune <= 0x11FF);
+      (rune >= 0xAC00 && rune <= 0xD7AF) || (rune >= 0x1100 && rune <= 0x11FF);
 
-  bool _isCyrillic(int rune) =>
-      (rune >= 0x0400 && rune <= 0x04FF);
+  bool _isCyrillic(int rune) => (rune >= 0x0400 && rune <= 0x04FF);
 
   bool _isArabic(int rune) =>
-      (rune >= 0x0600 && rune <= 0x06FF) ||
-      (rune >= 0x0750 && rune <= 0x077F);
+      (rune >= 0x0600 && rune <= 0x06FF) || (rune >= 0x0750 && rune <= 0x077F);
 }

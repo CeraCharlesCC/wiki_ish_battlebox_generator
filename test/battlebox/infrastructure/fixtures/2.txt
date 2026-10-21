@@ -1,0 +1,22 @@
+{{Infobox military conflict
+| conflict = Synthetic battle of Stoneharbor
+| image = {{Multiple image|image1=Stoneharbor.jpg|image2=Aftermath.png|caption2=Aftermath}}
+| combatant1 = {{Plainlist|
+* First [[Maritime alliance]]
+* Second [[Coastal garrison]]
+* Third {{Flagicon|Example}} [[Port guards]]
+* Fourth [[Merchant militia]]
+}}
+| combatant2 = {{Bulletlist|Inland army|Mountain brigade|Independent battalion|Volunteer cavalry}}
+| commander1 = {{Plainlist|
+* Admiral One
+* Commodore Two
+* Captain Three<ref name="footnote">Source for Three</ref>
+* Major Four
+}}
+| commander2 = {{Bulletlist|General Five|Colonel Six|Captain Seven|Lieutenant Eight}}
+| strength1 = {{Bulletlist|20 ships|400 sailors|250 infantry}}
+| strength2 = {{Bulletlist|2,000 infantry|300 cavalry|10 guns}}
+| casualties1 = {{Bulletlist|12 killed|18 wounded|1 missing|2 captured}}
+| casualties2 = {{Bulletlist|30 killed|51 wounded|5 missing|8 captured}}
+}}

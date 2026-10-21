@@ -6,11 +6,15 @@ import '../../application/ports/wiki_icon_gateway.dart';
 
 /// MediaWiki API implementation of WikiIconGateway.
 class WikiIconMediawikiAdapter implements WikiIconGateway {
-  WikiIconMediawikiAdapter({http.Client? client})
-      : _client = client ?? http.Client();
+  WikiIconMediawikiAdapter({http.Client? client, DateTime Function()? now})
+    : _client = client ?? http.Client(),
+      _ownsClient = client == null,
+      _now = now ?? DateTime.now;
 
   final http.Client _client;
-  final Map<_CacheKey, String?> _cache = {};
+  final bool _ownsClient;
+  final DateTime Function() _now;
+  final Map<_CacheKey, _IconCacheEntry> _cache = {};
   final Map<_CacheKey, Future<String?>> _pending = {};
 
   static const Map<String, String> _defaultHosts = {
@@ -35,8 +39,9 @@ class WikiIconMediawikiAdapter implements WikiIconGateway {
       code: code,
       width: widthPx,
     );
-    if (_cache.containsKey(cacheKey)) {
-      return _cache[cacheKey];
+    final cached = _cache[cacheKey];
+    if (cached != null && !cached.isExpired(_now())) {
+      return cached.url;
     }
     final existing = _pending[cacheKey];
     if (existing != null) {
@@ -51,7 +56,8 @@ class WikiIconMediawikiAdapter implements WikiIconGateway {
     _pending[cacheKey] = future;
     try {
       final value = await future;
-      _cache[cacheKey] = value;
+      if (_cache.length >= 512) _cache.remove(_cache.keys.first);
+      _cache[cacheKey] = _IconCacheEntry(value, _now());
       return value;
     } finally {
       _pending.remove(cacheKey);
@@ -60,7 +66,24 @@ class WikiIconMediawikiAdapter implements WikiIconGateway {
 
   @override
   void dispose() {
-    _client.close();
+    if (_ownsClient) _client.close();
+  }
+
+  Future<http.Response?> _get(Uri uri) async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final response = await _client
+            .get(uri, headers: {'Api-User-Agent': _userAgent})
+            .timeout(const Duration(seconds: 8));
+        if (response.statusCode == 200) return response;
+        if (response.statusCode != 429 && response.statusCode < 500) {
+          return null;
+        }
+      } catch (_) {
+        // Retry transport errors once. A temporary failure is not permanent.
+      }
+    }
+    return null;
   }
 
   Future<String?> _fetchFlagIcon({
@@ -81,11 +104,7 @@ class WikiIconMediawikiAdapter implements WikiIconGateway {
     if (fileName == null || fileName.isEmpty) {
       return null;
     }
-    return _fetchImageInfo(
-      host: host,
-      fileName: fileName,
-      widthPx: widthPx,
-    );
+    return _fetchImageInfo(host: host, fileName: fileName, widthPx: widthPx);
   }
 
   Future<String?> _expandTemplate({
@@ -101,13 +120,8 @@ class WikiIconMediawikiAdapter implements WikiIconGateway {
       'text': '{{${templateName.trim()}|${code.trim()}}}',
       'prop': 'wikitext',
     });
-    final resp = await _client.get(
-      uri,
-      headers: {'Api-User-Agent': _userAgent},
-    );
-    if (resp.statusCode != 200) {
-      return null;
-    }
+    final resp = await _get(uri);
+    if (resp == null) return null;
     final decoded = jsonDecode(resp.body);
     final expand = decoded is Map<String, dynamic>
         ? decoded['expandtemplates']
@@ -136,13 +150,8 @@ class WikiIconMediawikiAdapter implements WikiIconGateway {
       'iiurlwidth': '$widthPx',
       'titles': 'File:$fileName',
     });
-    final resp = await _client.get(
-      uri,
-      headers: {'Api-User-Agent': _userAgent},
-    );
-    if (resp.statusCode != 200) {
-      return null;
-    }
+    final resp = await _get(uri);
+    if (resp == null) return null;
     final decoded = jsonDecode(resp.body);
     final query = decoded is Map<String, dynamic> ? decoded['query'] : null;
     if (query is! Map<String, dynamic>) {
@@ -177,9 +186,10 @@ class WikiIconMediawikiAdapter implements WikiIconGateway {
   }
 
   String? _extractFileName(String wikitext) {
-    final match = RegExp(r'\[\[(?:File|ファイル):([^|\]]+)',
-            caseSensitive: false)
-        .firstMatch(wikitext);
+    final match = RegExp(
+      r'\[\[(?:File|ファイル):([^|\]]+)',
+      caseSensitive: false,
+    ).firstMatch(wikitext);
     return match?.group(1)?.trim();
   }
 
@@ -228,4 +238,15 @@ class _CacheKey {
 
   @override
   int get hashCode => Object.hash(host, template, code, width);
+}
+
+class _IconCacheEntry {
+  final String? url;
+  final DateTime timestamp;
+
+  _IconCacheEntry(this.url, this.timestamp);
+
+  bool isExpired(DateTime now) =>
+      now.difference(timestamp) >
+      (url == null ? const Duration(minutes: 5) : const Duration(days: 7));
 }

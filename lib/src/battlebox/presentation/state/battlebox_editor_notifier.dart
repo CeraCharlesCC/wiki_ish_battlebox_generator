@@ -7,23 +7,40 @@ import '../../domain/entities/battlebox_doc.dart';
 
 /// Riverpod notifier that exposes battlebox editing actions to the UI.
 class BattleboxEditorNotifier extends StateNotifier<BattleBoxDoc> {
+  static const int maxUndoSteps = 100;
+
   final BattleboxEditingUseCases _editing;
   final ImportWikitext _importWikitext;
   final ExportWikitext _exportWikitext;
+  final List<BattleBoxDoc> _undoStack = [];
+  final List<BattleBoxDoc> _redoStack = [];
 
   BattleboxEditorNotifier({
     required BattleboxEditingUseCases editing,
     required ImportWikitext importWikitext,
     required ExportWikitext exportWikitext,
     required BattleBoxDoc initialDoc,
-  })  : _editing = editing,
-        _importWikitext = importWikitext,
-        _exportWikitext = exportWikitext,
-        super(initialDoc);
+  }) : _editing = editing,
+       _importWikitext = importWikitext,
+       _exportWikitext = exportWikitext,
+       super(initialDoc);
 
+  bool get canUndo => _undoStack.isNotEmpty;
+  bool get canRedo => _redoStack.isNotEmpty;
+
+  /// Keep the previous document (and undo history) if parsing throws.
   void importWikitext(String text) {
     final parsed = _importWikitext(text);
-    state = _editing.replaceDoc(state, parsed);
+    _commit(_editing.replaceDoc(state, parsed));
+  }
+
+  /// Load a saved draft as the initial state, not an undoable user edit.
+  void restoreWikitext(String text) {
+    final parsed = _importWikitext(text);
+    final restored = _editing.replaceDoc(state, parsed);
+    _undoStack.clear();
+    _redoStack.clear();
+    state = restored;
   }
 
   String exportWikitext() {
@@ -31,44 +48,66 @@ class BattleboxEditorNotifier extends StateNotifier<BattleBoxDoc> {
   }
 
   void replaceDoc(BattleBoxDoc doc) {
-    state = _editing.replaceDoc(state, doc);
+    _commit(_editing.replaceDoc(state, doc));
+  }
+
+  void undo() {
+    if (!canUndo) return;
+    _redoStack.add(state);
+    state = _undoStack.removeLast();
+  }
+
+  void redo() {
+    if (!canRedo) return;
+    _undoStack.add(state);
+    state = _redoStack.removeLast();
+  }
+
+  void _commit(BattleBoxDoc next) {
+    if (identical(next, state)) return;
+    _undoStack.add(state);
+    if (_undoStack.length > maxUndoSteps) _undoStack.removeAt(0);
+    _redoStack.clear();
+    state = next;
   }
 
   void setTitle(String value) {
-    state = _editing.setTitle(state, value);
+    if (state.title == value) return;
+    _commit(_editing.setTitle(state, value));
   }
 
   void setSingleField(String sectionId, String value) {
-    state = _editing.setSingleField(state, sectionId, value);
+    _commit(_editing.setSingleField(state, sectionId, value));
   }
 
   void clearSingleField(String sectionId) {
-    state = _editing.clearSingleField(state, sectionId);
+    _commit(_editing.clearSingleField(state, sectionId));
   }
 
   void addListItem(String sectionId) {
-    state = _editing.addListItem(state, sectionId);
+    _commit(_editing.addListItem(state, sectionId));
   }
 
   void updateListItem(String sectionId, int index, String value) {
-    state = _editing.updateListItem(state, sectionId, index, value);
+    _commit(_editing.updateListItem(state, sectionId, index, value));
   }
 
   void deleteListItem(String sectionId, int index) {
-    state = _editing.deleteListItem(state, sectionId, index);
+    _commit(_editing.deleteListItem(state, sectionId, index));
   }
 
   void updateMultiColumnCell(String sectionId, int columnIndex, String value) {
-    state =
-        _editing.updateMultiColumnCell(state, sectionId, columnIndex, value);
+    _commit(
+      _editing.updateMultiColumnCell(state, sectionId, columnIndex, value),
+    );
   }
 
   void addBelligerentColumn() {
-    state = _editing.addBelligerentColumn(state);
+    _commit(_editing.addBelligerentColumn(state));
   }
 
   void deleteBelligerentColumn(int index) {
-    state = _editing.deleteBelligerentColumn(state, index);
+    _commit(_editing.deleteBelligerentColumn(state, index));
   }
 
   void setMedia({
@@ -77,12 +116,14 @@ class BattleboxEditorNotifier extends StateNotifier<BattleBoxDoc> {
     String? size,
     String? upright,
   }) {
-    state = _editing.setMedia(
-      state,
-      imageUrl: imageUrl,
-      caption: caption,
-      size: size,
-      upright: upright,
+    _commit(
+      _editing.setMedia(
+        state,
+        imageUrl: imageUrl,
+        caption: caption,
+        size: size,
+        upright: upright,
+      ),
     );
   }
 }

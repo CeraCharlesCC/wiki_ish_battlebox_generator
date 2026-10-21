@@ -1,0 +1,22 @@
+{{Infobox military conflict
+| conflict = Synthetic battle of Northbridge
+| date = 1 January 2000<br />2 January 2000
+| combatant1 = {{Plainlist|
+* '''Northern alliance'''
+* [[Northbridge garrison]]
+* {{Flagicon|Example}} [[East army]]
+* [[West militia]]
+}}
+| combatant2 = {{Bulletlist|Southern division|River fleet|Frontier soldiers|Volunteer guards}}
+| commander1 = {{Plainlist|
+* General North
+* Admiral East
+* Captain West
+* Lieutenant Central
+}}
+| commander2 = {{Bulletlist|General South|Colonel River|Major Plain|Captain Hill}}
+| strength1 = {{Bulletlist|1,500 infantry|50 cavalry|2 batteries}}
+| strength2 = {{Bulletlist|1,000 infantry|25 cavalry|1 battery}}
+| casualties1 = {{Bulletlist|100 killed|200 wounded|10 missing|20 captured}}
+| casualties2 = {{Bulletlist|80 killed|110 wounded|15 missing|5 captured}}
+}}

@@ -44,19 +44,25 @@ class WikitextFieldExtractors {
        _templateParser = templateParser ?? const WikitextTemplateParser();
 
   FieldExtractionResult extractCombatant(String raw) {
-    return _extractListField(raw, family: FieldFamily.combatant);
+    return _extractListField(raw);
   }
 
   FieldExtractionResult extractCommander(String raw) {
-    return _extractListField(raw, family: FieldFamily.commander);
+    return _extractListField(raw);
   }
 
   FieldExtractionResult extractStrength(String raw) {
-    return _extractListField(raw, family: FieldFamily.strength);
+    return _extractListField(raw);
   }
 
   FieldExtractionResult extractCasualties(String raw) {
-    return _extractListField(raw, family: FieldFamily.casualties);
+    return _extractListField(raw);
+  }
+
+  /// Split ordinary list fields (such as dates, places and units) without
+  /// rewriting references or unsupported templates they contain.
+  FieldExtractionResult extractGenericList(String raw) {
+    return _extractListField(raw);
   }
 
   FieldExtractionResult extractMediaImage(String raw) {
@@ -82,10 +88,14 @@ class WikitextFieldExtractors {
         if (parsed != null &&
             _normalizeTemplateName(parsed.templateName) == 'multiple image') {
           image = parsed.firstImageValue;
+          // The visual editor can only preview one image. Report the entire
+          // source template so callers know additional images and formatting
+          // would be lost without preserving the original wikitext.
+          fragments.add(token);
+          firstOffendingToken ??= 'multiple image';
           final remainder = trimmed.substring(close + 2).trim();
           if (remainder.isNotEmpty) {
             fragments.add(remainder);
-            firstOffendingToken ??= 'multiple image';
           }
         }
       }
@@ -118,10 +128,7 @@ class WikitextFieldExtractors {
     );
   }
 
-  FieldExtractionResult _extractListField(
-    String raw, {
-    required FieldFamily family,
-  }) {
+  FieldExtractionResult _extractListField(String raw) {
     if (raw.trim().isEmpty) {
       return const FieldExtractionResult(
         items: [],
@@ -137,6 +144,18 @@ class WikitextFieldExtractors {
     );
     final fragments = <String>[...normalized.unparsedFragments];
     var firstOffendingToken = normalized.firstOffendingToken;
+
+    // Standalone wiki list markers are removed for the visual list editor.
+    // Signal this formatting conversion instead of reporting a clean import.
+    if (RegExp(r'(^|\n)\s*[*#]+\s+').hasMatch(raw) && fragments.isEmpty) {
+      fragments.add(raw.trim());
+      firstOffendingToken ??= 'list marker';
+    }
+    if (RegExp(r'<hr\s*/?>|----', caseSensitive: false).hasMatch(raw) &&
+        fragments.isEmpty) {
+      fragments.add(raw.trim());
+      firstOffendingToken ??= 'horizontal rule';
+    }
 
     List<String> items;
     try {
@@ -157,11 +176,6 @@ class WikitextFieldExtractors {
       items = _splitItemsBestEffort(normalized.normalizedText);
     }
 
-    if ((family == FieldFamily.combatant || family == FieldFamily.commander) &&
-        items.isNotEmpty) {
-      items = items.map(_normalizeHeaderSpacing).toList();
-    }
-
     return FieldExtractionResult(
       items: items,
       unparsedFragments: fragments,
@@ -171,11 +185,86 @@ class WikitextFieldExtractors {
   }
 
   String _normalizeSeparators(String input) {
-    return input
-        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'<hr\s*/?>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'\{\{\s*hr\s*\}\}', caseSensitive: false), '\n')
-        .replaceAll('----', '\n');
+    // Only split on separators at the outer field level. A <br> inside a
+    // citation, an unknown nested template or a link is source wikitext, not
+    // a boundary between visual list items.
+    final result = StringBuffer();
+    final lower = input.toLowerCase();
+    final refStart = RegExp(r'<ref\b', caseSensitive: false);
+    final breakTag = RegExp(r'<(?:br|hr)\s*/?>', caseSensitive: false);
+    final hrTemplate = RegExp(r'^\{\{\s*hr\s*\}\}$', caseSensitive: false);
+    var index = 0;
+
+    while (index < input.length) {
+      if (input.startsWith('<!--', index)) {
+        final end = input.indexOf('-->', index + 4);
+        if (end < 0) {
+          result.write(input.substring(index));
+          break;
+        }
+        result.write(input.substring(index, end + 3));
+        index = end + 3;
+        continue;
+      }
+      if (refStart.matchAsPrefix(input, index) != null) {
+        final tagEnd = input.indexOf('>', index + 4);
+        if (tagEnd < 0) {
+          result.write(input.substring(index));
+          break;
+        }
+        final selfClosing = input
+            .substring(index, tagEnd + 1)
+            .trimRight()
+            .endsWith('/>');
+        final end = selfClosing ? -1 : lower.indexOf('</ref>', tagEnd + 1);
+        if (!selfClosing && end < 0) {
+          result.write(input.substring(index));
+          break;
+        }
+        final last = selfClosing ? tagEnd + 1 : end + 6;
+        result.write(input.substring(index, last));
+        index = last;
+        continue;
+      }
+      if (input.startsWith('{{', index)) {
+        final end = _scanner.findClosingTemplate(input, index + 2);
+        if (end < 0) {
+          result.write(input.substring(index));
+          break;
+        }
+        final value = input.substring(index, end + 2);
+        result.write(hrTemplate.hasMatch(value) ? '\n' : value);
+        index = end + 2;
+        continue;
+      }
+      if (input.startsWith('[[', index)) {
+        final end = input.indexOf(']]', index + 2);
+        if (end < 0) {
+          result.write(input.substring(index));
+          break;
+        }
+        result.write(input.substring(index, end + 2));
+        index = end + 2;
+        continue;
+      }
+
+      final tag = breakTag.matchAsPrefix(input, index);
+      if (tag != null) {
+        result.write('\n');
+        index = tag.end;
+        continue;
+      }
+      if (input.startsWith('----', index)) {
+        result.write('\n');
+        index += 4;
+        continue;
+      }
+
+      result.write(input[index]);
+      index++;
+    }
+
+    return result.toString();
   }
 
   List<String> _compactItems(List<String> segments) {
@@ -197,10 +286,6 @@ class WikitextFieldExtractors {
   List<String> _splitItemsBestEffort(String text) {
     final normalized = _normalizeSeparators(text);
     return _compactItems(normalized.split('\n'));
-  }
-
-  String _normalizeHeaderSpacing(String value) {
-    return value.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
   }
 
   ImportFieldStatus _resolveStatus({

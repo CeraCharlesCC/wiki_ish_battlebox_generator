@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -6,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/usecases/compute_precache_requests.dart';
+import '../../domain/entities/battlebox_doc.dart';
 import '../../domain/entities/wikitext_import_report.dart';
 import '../state/providers.dart';
 import '../widgets/battlebox_card.dart';
@@ -28,40 +31,259 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
   final GlobalKey _battleBoxKey = GlobalKey();
   bool _showPanel = true;
   bool _isExporting = false;
+  bool _isApplyingImport = false;
+  bool _isManualDraft = false;
+  bool _visualChangedDuringDraft = false;
+  bool _draftRecoveryFailed = false;
+  bool _autosaveFailed = false;
+  late String _lastSyncedWikitext;
+  Timer? _autosaveTimer;
 
   @override
   void initState() {
     super.initState();
     final notifier = ref.read(battleboxEditorNotifierProvider.notifier);
-    _wikitextController =
-        TextEditingController(text: notifier.exportWikitext());
+    _lastSyncedWikitext = notifier.exportWikitext();
+    _wikitextController = TextEditingController(text: _lastSyncedWikitext);
+    _wikitextController.addListener(_onWikitextEdited);
+    // Riverpod cannot notify widgets of document changes while the tree is
+    // mounting. Apply local recovery after the initial frame instead.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _isApplyingImport = true;
+      _wikitextController.removeListener(_onWikitextEdited);
+      try {
+        _restoreDraft();
+      } finally {
+        _wikitextController.addListener(_onWikitextEdited);
+        _isApplyingImport = false;
+      }
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _autosaveTimer?.cancel();
+    _persistDraft(notifyUi: false);
+    _wikitextController.removeListener(_onWikitextEdited);
     _wikitextController.dispose();
     super.dispose();
   }
 
-  void _importWikitext() {
-    ref
-        .read(battleboxEditorNotifierProvider.notifier)
-        .importWikitext(_wikitextController.text);
+  void _restoreDraft() {
+    try {
+      final saved = ref.read(editorDraftStorageProvider).read();
+      if (saved == null) return;
+      final decoded = jsonDecode(saved);
+      if (decoded is! Map<String, dynamic> || decoded['version'] != 1) {
+        return;
+      }
+
+      final savedDocument = decoded['documentWikitext'];
+      var visualRecovered = false;
+      if (savedDocument is String && savedDocument.isNotEmpty) {
+        try {
+          ref
+              .read(battleboxEditorNotifierProvider.notifier)
+              .restoreWikitext(savedDocument);
+          visualRecovered = true;
+        } catch (_) {
+          // The saved visual document cannot be restored, but the user's raw
+          // text is still recoverable in the editor below.
+        }
+      }
+      final rawText = decoded['editorWikitext'];
+      final restoredText = decoded['syncedWikitext'];
+      _lastSyncedWikitext = restoredText is String
+          ? restoredText
+          : ref.read(battleboxEditorNotifierProvider.notifier).exportWikitext();
+      if (rawText is String) {
+        _wikitextController.text = rawText;
+        _isManualDraft =
+            decoded['manualDraft'] == true ||
+            rawText != _lastSyncedWikitext ||
+            (!visualRecovered && rawText.isNotEmpty);
+        _draftRecoveryFailed = !visualRecovered && rawText.isNotEmpty;
+        _visualChangedDuringDraft =
+            decoded['visualChangedDuringDraft'] == true || _draftRecoveryFailed;
+      } else {
+        _wikitextController.text = _lastSyncedWikitext;
+      }
+    } catch (_) {
+      // Invalid JSON or blocked localStorage must not prevent editing.
+      _autosaveFailed = true;
+    }
   }
 
-  void _exportWikitext() {
-    final wikitext =
-        ref.read(battleboxEditorNotifierProvider.notifier).exportWikitext();
-    _wikitextController.text = wikitext;
+  void _setSyncedWikitext(String text) {
+    _lastSyncedWikitext = text;
+    _isManualDraft = false;
+    _visualChangedDuringDraft = false;
+    _draftRecoveryFailed = false;
+    _wikitextController.removeListener(_onWikitextEdited);
+    _wikitextController.text = text;
+    _wikitextController.addListener(_onWikitextEdited);
+    _scheduleAutosave();
+    if (mounted) setState(() {});
+  }
+
+  void _onWikitextEdited() {
+    final dirty = _wikitextController.text != _lastSyncedWikitext;
+    if (!dirty && _visualChangedDuringDraft) {
+      _setSyncedWikitext(
+        ref.read(battleboxEditorNotifierProvider.notifier).exportWikitext(),
+      );
+      return;
+    }
+    if (_isManualDraft != dirty) {
+      setState(() => _isManualDraft = dirty);
+    }
+    _scheduleAutosave();
+  }
+
+  void _onDocumentChanged() {
+    if (_isApplyingImport) return;
+    if (_isManualDraft) {
+      setState(() => _visualChangedDuringDraft = true);
+      _scheduleAutosave();
+    } else {
+      _setSyncedWikitext(
+        ref.read(battleboxEditorNotifierProvider.notifier).exportWikitext(),
+      );
+    }
+  }
+
+  void _scheduleAutosave() {
+    _autosaveTimer?.cancel();
+    _autosaveTimer = Timer(const Duration(milliseconds: 300), _persistDraft);
+  }
+
+  void _persistDraft({bool notifyUi = true}) {
+    try {
+      final documentText = ref
+          .read(battleboxEditorNotifierProvider.notifier)
+          .exportWikitext();
+      ref
+          .read(editorDraftStorageProvider)
+          .write(
+            jsonEncode({
+              'version': 1,
+              'documentWikitext': documentText,
+              'editorWikitext': _wikitextController.text,
+              'syncedWikitext': _lastSyncedWikitext,
+              'manualDraft': _isManualDraft,
+              'visualChangedDuringDraft': _visualChangedDuringDraft,
+            }),
+          );
+      if (notifyUi && _autosaveFailed && mounted) {
+        setState(() => _autosaveFailed = false);
+      }
+    } catch (_) {
+      if (notifyUi && !_autosaveFailed && mounted) {
+        setState(() => _autosaveFailed = true);
+      }
+    }
+  }
+
+  void _importWikitext() {
+    final source = _wikitextController.text;
+    _isApplyingImport = true;
+    try {
+      ref.read(battleboxEditorNotifierProvider.notifier).importWikitext(source);
+      // Keep the user's exact imported wikitext until the visual editor
+      // changes. Regeneration can normalize or omit unsupported markup.
+      _setSyncedWikitext(source);
+      final report = ref.read(battleboxEditorNotifierProvider).importReport;
+      if (report != null && (report.partialCount + report.failedCount) > 0) {
+        _showMessage(
+          'Imported with warnings. Review the import report before exporting.',
+        );
+      }
+    } on FormatException catch (error) {
+      _showMessage(
+        'Import rejected; your document is unchanged. ${error.message}',
+      );
+    } catch (error) {
+      _showMessage('Import failed; your document is unchanged: $error');
+    } finally {
+      _isApplyingImport = false;
+    }
+  }
+
+  Future<void> _exportWikitext() async {
+    if (_isManualDraft) {
+      final replace = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Replace your wikitext draft?'),
+          content: const Text(
+            'This will overwrite your unimported wikitext edits with the current visual editor contents.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep draft'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Replace from visual'),
+            ),
+          ],
+        ),
+      );
+      if (replace != true || !mounted) return;
+    }
+    final wikitext = ref
+        .read(battleboxEditorNotifierProvider.notifier)
+        .exportWikitext();
+    _setSyncedWikitext(wikitext);
   }
 
   Future<void> _copyWikitext() async {
-    await Clipboard.setData(ClipboardData(text: _wikitextController.text));
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Wikitext copied to clipboard')),
+    // When no visual edits followed an import, the original source is safer
+    // than a fresh serialization: it may contain unsupported wiki markup.
+    var text = _wikitextController.text;
+    if (_isManualDraft && _visualChangedDuringDraft) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Two versions of wikitext'),
+          content: const Text(
+            'Both the visual editor and your unimported wikitext draft have changed. Choose which version to copy.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'draft'),
+              child: const Text('Copy my draft'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, 'visual'),
+              child: const Text('Copy visual editor'),
+            ),
+          ],
+        ),
       );
+      if (choice == null || !mounted) return;
+      if (choice == 'visual') {
+        text = ref
+            .read(battleboxEditorNotifierProvider.notifier)
+            .exportWikitext();
+      }
     }
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) _showMessage('Wikitext copied to clipboard.');
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _togglePanel() {
@@ -82,8 +304,8 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
       _isExporting = true;
     });
     try {
-      // Precache all network images before capture
-      await _precacheAllImages();
+      // A broken MediaWiki icon must not block the rest of the PNG export.
+      final failedImages = await _precacheAllImages();
 
       // Give widgets (FutureBuilders/Image decoders) a chance to rebuild/paint
       // with the now-cached URLs and decoded images before we snapshot.
@@ -95,7 +317,8 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
       await WidgetsBinding.instance.endOfFrame;
 
       final boundary =
-          _battleBoxKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+          _battleBoxKey.currentContext?.findRenderObject()
+              as RenderRepaintBoundary?;
       if (boundary == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -109,11 +332,18 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
       }
       final pixelRatio = MediaQuery.of(context).devicePixelRatio;
       final image = await boundary.toImage(pixelRatio: pixelRatio);
-      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      ByteData? byteData;
+      try {
+        byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      } finally {
+        image.dispose();
+      }
       if (byteData == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Export failed: could not render PNG.')),
+            const SnackBar(
+              content: Text('Export failed: could not render PNG.'),
+            ),
           );
         }
         return;
@@ -124,22 +354,16 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
         filename: 'battlebox.png',
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              savedPath == null
-                  ? 'Image download started.'
-                  : 'Image saved to $savedPath',
-            ),
-          ),
+        _showMessage(
+          '${savedPath == null ? 'Image download started.' : 'Image saved to $savedPath'}'
+          '${failedImages > 0 ? ' ($failedImages image(s) unavailable; placeholders used)' : ''}',
         );
       }
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Export failed.')),
-        );
-      }
+      final reason = error.toString();
+      _showMessage(
+        'PNG export failed: ${reason.length > 180 ? reason.substring(0, 180) : reason}',
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -166,11 +390,12 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
     return sizes;
   }
 
-  Future<void> _precacheAllImages() async {
-    if (!mounted) return;
+  Future<int> _precacheAllImages() async {
+    if (!mounted) return 0;
 
     final doc = ref.read(battleboxEditorNotifierProvider);
     final gateway = ref.read(wikiIconGatewayProvider);
+    final mediaGateway = ref.read(wikiImageGatewayProvider);
     final computePrecache = ref.read(computePrecacheRequestsProvider);
     final dpr = MediaQuery.of(context).devicePixelRatio;
     final fontSizes = _candidateFontSizes(context);
@@ -181,18 +406,35 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
       devicePixelRatio: dpr,
     );
 
+    var failed = 0;
+
+    Future<String?> safelyResolve(Future<String?> Function() resolve) async {
+      try {
+        final url = await resolve().timeout(const Duration(seconds: 10));
+        if (url == null || url.isEmpty) failed++;
+        return url;
+      } catch (_) {
+        failed++;
+        return null;
+      }
+    }
+
     final imageUrls = <Future<String?>>[];
     for (final request in requests) {
       switch (request) {
         case DirectUrlRequest request:
-          imageUrls.add(Future.value(request.url));
+          imageUrls.add(
+            safelyResolve(() => mediaGateway.resolveImageUrl(request.url)),
+          );
         case FlagIconRequest request:
           imageUrls.add(
-            gateway.resolveFlagIcon(
-              templateName: request.templateName,
-              code: request.code,
-              widthPx: request.widthPx,
-              hostOverride: request.hostOverride,
+            safelyResolve(
+              () => gateway.resolveFlagIcon(
+                templateName: request.templateName,
+                code: request.code,
+                widthPx: request.widthPx,
+                hostOverride: request.hostOverride,
+              ),
             ),
           );
       }
@@ -202,19 +444,31 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
     final resolvedUrls = await Future.wait(imageUrls);
     final precacheFutures = <Future<void>>[];
 
-    for (final url in resolvedUrls) {
+    for (final url in resolvedUrls.toSet()) {
       if (url != null && url.isNotEmpty && mounted) {
         precacheFutures.add(
-          precacheImage(NetworkImage(url), context).catchError((_) {}),
+          precacheImage(
+            NetworkImage(url),
+            context,
+          ).timeout(const Duration(seconds: 10)).catchError((Object _) {
+            failed++;
+          }),
         );
       }
     }
 
     await Future.wait(precacheFutures);
+    return failed;
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(battleboxEditorNotifierProvider);
+    ref.listen<BattleBoxDoc>(
+      battleboxEditorNotifierProvider,
+      (previous, next) => _onDocumentChanged(),
+    );
+    final notifier = ref.read(battleboxEditorNotifierProvider.notifier);
     final isWide = MediaQuery.sizeOf(context).width >= 960;
     final showPanel = isWide || _showPanel;
 
@@ -228,9 +482,7 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
           if (!isWide)
             IconButton(
               tooltip: showPanel ? 'Collapse wikitext' : 'Expand wikitext',
-              icon: Icon(
-                showPanel ? Icons.expand_less : Icons.expand_more,
-              ),
+              icon: Icon(showPanel ? Icons.expand_less : Icons.expand_more),
               onPressed: _togglePanel,
             ),
         ],
@@ -243,9 +495,7 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
               return SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
                 child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight: constraints.maxHeight,
-                  ),
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
                   child: isWide
                       ? Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -259,16 +509,27 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
                                 onCopy: _copyWikitext,
                                 onExportImage: _exportImage,
                                 isExporting: _isExporting,
+                                onUndo: notifier.undo,
+                                onRedo: notifier.redo,
+                                canUndo: notifier.canUndo,
+                                canRedo: notifier.canRedo,
+                                hasManualDraft: _isManualDraft,
+                                hasConflictingEdits: _visualChangedDuringDraft,
+                                autosaveFailed: _autosaveFailed,
+                                recoveryFailed: _draftRecoveryFailed,
                               ),
                             ),
                             const SizedBox(width: 24),
                             Expanded(
                               child: Align(
                                 alignment: Alignment.topCenter,
-                                child: RepaintBoundary(
-                                  key: _battleBoxKey,
-                                  child: BattleBoxCard(
-                                    isExportMode: _isExporting,
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: RepaintBoundary(
+                                    key: _battleBoxKey,
+                                    child: BattleBoxCard(
+                                      isExportMode: _isExporting,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -285,16 +546,27 @@ class _BattleBoxEditorScreenState extends ConsumerState<BattleBoxEditorScreen> {
                               onCopy: _copyWikitext,
                               onExportImage: _exportImage,
                               isExporting: _isExporting,
+                              onUndo: notifier.undo,
+                              onRedo: notifier.redo,
+                              canUndo: notifier.canUndo,
+                              canRedo: notifier.canRedo,
+                              hasManualDraft: _isManualDraft,
+                              hasConflictingEdits: _visualChangedDuringDraft,
+                              autosaveFailed: _autosaveFailed,
+                              recoveryFailed: _draftRecoveryFailed,
                               isCollapsible: true,
                               isExpanded: showPanel,
                               onToggle: _togglePanel,
                             ),
                             const SizedBox(height: 16),
                             Center(
-                              child: RepaintBoundary(
-                                key: _battleBoxKey,
-                                child: BattleBoxCard(
-                                  isExportMode: _isExporting,
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: RepaintBoundary(
+                                  key: _battleBoxKey,
+                                  child: BattleBoxCard(
+                                    isExportMode: _isExporting,
+                                  ),
                                 ),
                               ),
                             ),
@@ -317,6 +589,14 @@ class WikitextPanel extends ConsumerWidget {
   final VoidCallback onCopy;
   final VoidCallback onExportImage;
   final bool isExporting;
+  final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
+  final bool canUndo;
+  final bool canRedo;
+  final bool hasManualDraft;
+  final bool hasConflictingEdits;
+  final bool autosaveFailed;
+  final bool recoveryFailed;
   final bool isCollapsible;
   final bool isExpanded;
   final VoidCallback? onToggle;
@@ -329,6 +609,14 @@ class WikitextPanel extends ConsumerWidget {
     required this.onCopy,
     required this.onExportImage,
     this.isExporting = false,
+    this.onUndo,
+    this.onRedo,
+    this.canUndo = false,
+    this.canRedo = false,
+    this.hasManualDraft = false,
+    this.hasConflictingEdits = false,
+    this.autosaveFailed = false,
+    this.recoveryFailed = false,
     this.isCollapsible = false,
     this.isExpanded = true,
     this.onToggle,
@@ -338,19 +626,22 @@ class WikitextPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final bodyVisible = !isCollapsible || isExpanded;
     final report = ref.watch(battleboxEditorNotifierProvider).importReport;
-    final reportFields = report?.fields.values.toList() ?? const <ImportFieldReport>[];
-    final flaggedFields = reportFields
-        .where(
-          (field) =>
-              field.status == ImportFieldStatus.partial ||
-              field.status == ImportFieldStatus.failed,
-        )
-        .toList()
-      ..sort((a, b) => a.key.compareTo(b.key));
-    final fieldsWithFragments = reportFields
-        .where((field) => field.unparsedFragments.isNotEmpty)
-        .toList()
-      ..sort((a, b) => a.key.compareTo(b.key));
+    final reportFields =
+        report?.fields.values.toList() ?? const <ImportFieldReport>[];
+    final flaggedFields =
+        reportFields
+            .where(
+              (field) =>
+                  field.status == ImportFieldStatus.partial ||
+                  field.status == ImportFieldStatus.failed,
+            )
+            .toList()
+          ..sort((a, b) => a.key.compareTo(b.key));
+    final fieldsWithFragments =
+        reportFields
+            .where((field) => field.unparsedFragments.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.key.compareTo(b.key));
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -370,10 +661,20 @@ class WikitextPanel extends ConsumerWidget {
                   child: Text(
                     'Wikitext',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: _wikiText,
-                        ),
+                      fontWeight: FontWeight.w700,
+                      color: _wikiText,
+                    ),
                   ),
+                ),
+                IconButton(
+                  tooltip: 'Undo visual edit',
+                  onPressed: canUndo ? onUndo : null,
+                  icon: const Icon(Icons.undo),
+                ),
+                IconButton(
+                  tooltip: 'Redo visual edit',
+                  onPressed: canRedo ? onRedo : null,
+                  icon: const Icon(Icons.redo),
                 ),
                 if (isCollapsible)
                   Icon(
@@ -388,6 +689,37 @@ class WikitextPanel extends ConsumerWidget {
             secondChild: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const SizedBox(height: 8),
+                if (hasManualDraft) ...[
+                  if (recoveryFailed) ...[
+                    Text(
+                      'The saved visual document could not be restored. Your original wikitext remains below; Import it to recover, or Copy it before editing further.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFFB32424),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  Text(
+                    hasConflictingEdits
+                        ? 'Unimported wikitext and visual changes conflict. Import your draft, or use Export to replace it. Copy will ask which version to use.'
+                        : 'Unimported wikitext draft. Visual edits will not overwrite it.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF8B5300),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Text(
+                  autosaveFailed
+                      ? 'Local autosave unavailable in this browser. Copy your work before leaving.'
+                      : 'Draft autosaves locally in this browser.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: autosaveFailed
+                        ? const Color(0xFFB32424)
+                        : _wikiSubtleText,
+                  ),
+                ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: controller,
@@ -429,7 +761,9 @@ class WikitextPanel extends ConsumerWidget {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.image_outlined),
-                      label: Text(isExporting ? 'Exporting...' : 'Export Image'),
+                      label: Text(
+                        isExporting ? 'Exporting...' : 'Export Image',
+                      ),
                     ),
                     FilledButton.icon(
                       onPressed: onCopy,
@@ -443,16 +777,16 @@ class WikitextPanel extends ConsumerWidget {
                   Text(
                     'Import report',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: _wikiText,
-                        ),
+                      fontWeight: FontWeight.w700,
+                      color: _wikiText,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     'Parsed: ${report.parsedCount} • Partial: ${report.partialCount} • Failed: ${report.failedCount}',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _wikiSubtleText,
-                        ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: _wikiSubtleText),
                   ),
                   if (flaggedFields.isNotEmpty) ...[
                     const SizedBox(height: 8),
@@ -461,9 +795,9 @@ class WikitextPanel extends ConsumerWidget {
                         padding: const EdgeInsets.only(bottom: 2),
                         child: Text(
                           '${field.key}: ${field.status.name}${field.firstOffendingToken == null ? '' : ' • ${field.firstOffendingToken}'}',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: _wikiText,
-                              ),
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(color: _wikiText),
                         ),
                       ),
                   ],
@@ -472,9 +806,9 @@ class WikitextPanel extends ConsumerWidget {
                     Text(
                       'Unparsed fragments',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: _wikiText,
-                          ),
+                        fontWeight: FontWeight.w700,
+                        color: _wikiText,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     for (final field in fieldsWithFragments)
@@ -485,7 +819,8 @@ class WikitextPanel extends ConsumerWidget {
                           children: [
                             Text(
                               field.key,
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
                                     color: _wikiSubtleText,
                                     fontWeight: FontWeight.w600,
                                   ),

@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -347,11 +346,14 @@ class WikitextInlineRenderer extends ConsumerWidget {
       return TextSpan(text: displayText, style: linkStyle);
     }
 
-    return TextSpan(
-      text: displayText,
-      style: linkStyle,
-      recognizer: TapGestureRecognizer()
-        ..onTap = () => _onExternalLinkTap(context, opener, uri),
+    // A WidgetSpan delegates recognizer lifetime to the widget tree. Creating
+    // TapGestureRecognizers in build() would leak them on every rebuild.
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.middle,
+      child: GestureDetector(
+        onTap: () => _onExternalLinkTap(context, opener, uri),
+        child: Text(displayText, style: linkStyle),
+      ),
     );
   }
 
@@ -373,9 +375,9 @@ class WikitextInlineRenderer extends ConsumerWidget {
   }
 
   void _showError(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -443,18 +445,28 @@ class _WikiLinkSpanState extends State<_WikiLinkSpan> {
   }
 
   void _startResolve() {
-    _resolveFuture = widget.gateway.resolve(
+    _exists = null;
+    final future = widget.gateway.resolve(
       rawTarget: widget.link.rawTarget,
       fragment: widget.link.fragment,
       forcedLang: widget.link.langPrefix,
     );
-    _resolveFuture!.then((result) {
-      if (mounted) {
-        setState(() {
-          _exists = result != null;
-        });
-      }
-    });
+    _resolveFuture = future;
+    future.then(
+      (result) {
+        if (mounted && identical(_resolveFuture, future)) {
+          setState(() {
+            _exists = result != null;
+          });
+        }
+      },
+      onError: (Object error) {
+        // A network error is not evidence that a Wikipedia page is missing.
+        if (mounted && identical(_resolveFuture, future)) {
+          setState(() => _exists = null);
+        }
+      },
+    );
   }
 
   @override
@@ -479,7 +491,12 @@ class _WikiLinkSpanState extends State<_WikiLinkSpan> {
 
   Future<void> _onTap(BuildContext context) async {
     // Try to use resolved URL if available, otherwise fallback to naive
-    final resolved = await _resolveFuture;
+    ResolvedWikiLink? resolved;
+    try {
+      resolved = await _resolveFuture;
+    } catch (_) {
+      // Fall back to a navigable URL instead of displaying a false redlink.
+    }
     final String url;
     if (resolved != null) {
       url = resolved.url;
@@ -551,7 +568,8 @@ class _IconSpan extends StatelessWidget {
                 _fallbackText(style, macro.fallbackText),
           );
         }
-        if (snapshot.hasError) {
+        if (snapshot.hasError ||
+            snapshot.connectionState == ConnectionState.done) {
           return _fallbackText(style, macro.fallbackText);
         }
         return SizedBox(
@@ -569,9 +587,6 @@ class _IconSpan extends StatelessWidget {
   }
 
   Widget _fallbackText(TextStyle style, String text) {
-    return Text(
-      text,
-      style: style,
-    );
+    return Text(text, style: style);
   }
 }

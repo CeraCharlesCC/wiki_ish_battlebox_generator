@@ -38,6 +38,9 @@ jobs:
       - name: Run tests
         run: flutter test --no-pub
 
+      - name: Analyze Dart sources
+        run: flutter analyze --no-pub
+
       - name: Build web (GitHub Pages base-href)
         run: flutter build web --release --base-href "/${{ github.event.repository.name }}/"
 

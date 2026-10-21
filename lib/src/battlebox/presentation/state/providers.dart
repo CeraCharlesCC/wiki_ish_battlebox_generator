@@ -4,9 +4,11 @@ import 'package:http/http.dart' as http;
 import '../../../core/clock.dart';
 import '../../../core/id_generator.dart';
 import '../../application/ports/battlebox_serializer.dart';
+import '../../application/ports/editor_draft_storage.dart';
 import '../../application/ports/external_link_opener.dart';
 import '../../application/ports/image_exporter.dart';
 import '../../application/ports/wiki_icon_gateway.dart';
+import '../../application/ports/wiki_image_gateway.dart';
 import '../../application/ports/wiki_link_gateway.dart';
 import '../../application/usecases/battlebox_editing_usecases.dart';
 import '../../application/usecases/compute_precache_requests.dart';
@@ -16,8 +18,10 @@ import '../../domain/entities/battlebox_doc.dart';
 import '../../domain/services/battlebox_editor.dart';
 import '../../domain/services/battlebox_seed.dart';
 import '../../infrastructure/http/wiki_icon_mediawiki_adapter.dart';
+import '../../infrastructure/http/wiki_image_mediawiki_adapter.dart';
 import '../../infrastructure/http/wiki_link_mediawiki_adapter.dart';
 import '../../infrastructure/platform/platform_image_exporter.dart';
+import '../../infrastructure/platform/editor_draft_storage.dart';
 import '../../infrastructure/serialization/wikitext_battlebox_serializer.dart';
 import '../../infrastructure/system/url_launcher_opener.dart';
 import 'battlebox_editor_notifier.dart';
@@ -38,6 +42,14 @@ final wikiIconGatewayProvider = Provider<WikiIconGateway>((ref) {
   return adapter;
 });
 
+final wikiImageGatewayProvider = Provider<WikiImageGateway>((ref) {
+  final adapter = WikiImageMediawikiAdapter(
+    client: ref.watch(httpClientProvider),
+  );
+  ref.onDispose(adapter.dispose);
+  return adapter;
+});
+
 /// Provides the WikiLinkGateway port implementation.
 final wikiLinkGatewayProvider = Provider<WikiLinkGateway>((ref) {
   final client = ref.watch(httpClientProvider);
@@ -54,6 +66,11 @@ final battleboxSerializerProvider = Provider<BattleboxSerializer>((ref) {
 /// Provides the ImageExporter port implementation.
 final imageExporterProvider = Provider<ImageExporter>((ref) {
   return const PlatformImageExporter();
+});
+
+/// Local browser draft persistence, overridden by in-memory storage in tests.
+final editorDraftStorageProvider = Provider<EditorDraftStorage>((ref) {
+  return createEditorDraftStorage();
 });
 
 /// Provides the ExternalLinkOpener port implementation.
@@ -85,8 +102,9 @@ final battleboxDomainEditorProvider = Provider<BattleboxEditor>((ref) {
 });
 
 /// Provides editing use cases.
-final battleboxEditingUseCasesProvider =
-    Provider<BattleboxEditingUseCases>((ref) {
+final battleboxEditingUseCasesProvider = Provider<BattleboxEditingUseCases>((
+  ref,
+) {
   return BattleboxEditingUseCases(
     editor: ref.watch(battleboxDomainEditorProvider),
   );
@@ -103,18 +121,20 @@ final exportWikitextProvider = Provider<ExportWikitext>((ref) {
 });
 
 /// Provides the precache planning use case.
-final computePrecacheRequestsProvider = Provider<ComputePrecacheRequests>((ref) {
+final computePrecacheRequestsProvider = Provider<ComputePrecacheRequests>((
+  ref,
+) {
   return const ComputePrecacheRequests(WikitextInlineParser());
 });
 
 /// Provides the battlebox editor notifier.
 final battleboxEditorNotifierProvider =
     StateNotifierProvider<BattleboxEditorNotifier, BattleBoxDoc>((ref) {
-  final seed = ref.watch(battleboxSeedProvider);
-  return BattleboxEditorNotifier(
-    editing: ref.watch(battleboxEditingUseCasesProvider),
-    importWikitext: ref.watch(importWikitextProvider),
-    exportWikitext: ref.watch(exportWikitextProvider),
-    initialDoc: seed.create(),
-  );
-});
+      final seed = ref.watch(battleboxSeedProvider);
+      return BattleboxEditorNotifier(
+        editing: ref.watch(battleboxEditingUseCasesProvider),
+        importWikitext: ref.watch(importWikitextProvider),
+        exportWikitext: ref.watch(exportWikitextProvider),
+        initialDoc: seed.create(),
+      );
+    });

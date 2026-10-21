@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -12,6 +14,8 @@ const _infoboxHeaderBackground = Color(0xFFD8E4F2);
 const _infoboxLabelBackground = Color(0xFFEAECF0);
 const _infoboxColumnHeaderBackground = Color(0xFFF2F4F7);
 const _infoboxIconColor = Color(0xFF54595D);
+const _defaultCardWidth = 380.0;
+const _minimumColumnWidth = 112.0;
 
 class BattleBoxCard extends ConsumerWidget {
   final bool isExportMode;
@@ -23,8 +27,28 @@ class BattleBoxCard extends ConsumerWidget {
     final doc = ref.watch(battleboxEditorNotifierProvider);
     final controller = ref.read(battleboxEditorNotifierProvider.notifier);
 
+    // RepaintBoundary.toImage uses the card's *rendered* width. During export,
+    // let that width accommodate every visible column instead of capturing
+    // only the first 380 px of a horizontally scrolled section.
+    var exportColumns = 0;
+    if (isExportMode) {
+      for (final section in doc.sections) {
+        if (section is MultiColumnSection &&
+            section.isVisible &&
+            !_isSectionEmpty(section)) {
+          exportColumns = math.max(exportColumns, section.columns.length);
+        }
+      }
+    }
+    final exportWidth = math.max(
+      _defaultCardWidth,
+      exportColumns * _minimumColumnWidth + 2, // Card's left and right borders.
+    );
+
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 380, minWidth: 320),
+      constraints: isExportMode
+          ? BoxConstraints.tightFor(width: exportWidth)
+          : const BoxConstraints(minWidth: 320, maxWidth: _defaultCardWidth),
       child: Container(
         decoration: BoxDecoration(
           color: _infoboxBackground,
@@ -152,18 +176,9 @@ class _MediaBlock extends StatelessWidget {
               border: Border.all(color: _infoboxBorder),
             ),
             child: hasImage
-                ? ClipRRect(
-                    child: Image.network(
-                      imageUrl,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      errorBuilder: (context, error, stackTrace) {
-                        return _imagePlaceholder(
-                          context,
-                          showText: !isExportMode,
-                        );
-                      },
-                    ),
+                ? _ResolvedMediaImage(
+                    source: imageUrl,
+                    isExportMode: isExportMode,
                   )
                 : _imagePlaceholder(context, showText: !isExportMode),
           ),
@@ -172,7 +187,7 @@ class _MediaBlock extends StatelessWidget {
             EditableValue(
               value: imageUrl,
               onCommit: (value) => onUpdate(imageUrl: value),
-              placeholder: 'Image URL',
+              placeholder: 'Wikipedia image filename or URL',
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 4),
@@ -204,6 +219,70 @@ class _MediaBlock extends StatelessWidget {
           context,
         ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6C7278)),
       ),
+    );
+  }
+}
+
+/// The resolved URL is retained across rebuilds; otherwise a FutureBuilder
+/// could briefly show a blank image every time a visual field changes.
+class _ResolvedMediaImage extends ConsumerStatefulWidget {
+  final String source;
+  final bool isExportMode;
+
+  const _ResolvedMediaImage({required this.source, required this.isExportMode});
+
+  @override
+  ConsumerState<_ResolvedMediaImage> createState() =>
+      _ResolvedMediaImageState();
+}
+
+class _ResolvedMediaImageState extends ConsumerState<_ResolvedMediaImage> {
+  late Future<String?> _imageUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(_ResolvedMediaImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.source != widget.source) _resolve();
+  }
+
+  void _resolve() {
+    _imageUrl = ref
+        .read(wikiImageGatewayProvider)
+        .resolveImageUrl(widget.source);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String?>(
+      future: _imageUrl,
+      builder: (context, snapshot) {
+        final url = snapshot.data;
+        if (url == null || url.isEmpty) {
+          if (!widget.isExportMode &&
+              snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(strokeWidth: 2),
+            );
+          }
+          return widget.isExportMode
+              ? const SizedBox.expand()
+              : const Center(child: Text('Image unavailable'));
+        }
+        return Image.network(
+          url,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          errorBuilder: (context, error, stackTrace) => widget.isExportMode
+              ? const SizedBox.expand()
+              : const Center(child: Text('Could not load image')),
+        );
+      },
     );
   }
 }
@@ -367,71 +446,91 @@ class _MultiColumnBlock extends StatelessWidget {
               ),
             ),
           ),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (var i = 0; i < section.columns.length; i++)
-                Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: Border(
-                        right: BorderSide(
-                          color: i == section.columns.length - 1
-                              ? Colors.transparent
-                              : _infoboxBorder,
-                        ),
-                      ),
-                    ),
-                    child: Column(
-                      children: [
-                        if (!isExportMode)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 6,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final content = SizedBox(
+                width: math.max(
+                  section.columns.length * _minimumColumnWidth,
+                  constraints.maxWidth,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < section.columns.length; i++)
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border(
+                              right: BorderSide(
+                                color: i == section.columns.length - 1
+                                    ? Colors.transparent
+                                    : _infoboxBorder,
+                              ),
                             ),
-                            color: _infoboxColumnHeaderBackground,
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    section.columns[i].label,
-                                    style: Theme.of(context).textTheme.bodySmall
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.w600,
-                                          color: const Color(0xFF202122),
+                          ),
+                          child: Column(
+                            children: [
+                              if (!isExportMode)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 6,
+                                  ),
+                                  color: _infoboxColumnHeaderBackground,
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          section.columns[i].label,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w600,
+                                                color: const Color(0xFF202122),
+                                              ),
+                                          textAlign: TextAlign.center,
                                         ),
-                                    textAlign: TextAlign.center,
+                                      ),
+                                      _IconButton(
+                                        icon: Icons.delete_outline,
+                                        tooltip: 'Delete column',
+                                        onPressed: () => onDeleteColumn(i),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                _IconButton(
-                                  icon: Icons.delete_outline,
-                                  tooltip: 'Delete column',
-                                  onPressed: () => onDeleteColumn(i),
+                              Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: EditableValue(
+                                  value: section.cells[i]
+                                      .map((e) => e.raw)
+                                      .join('\n'),
+                                  onCommit: (value) =>
+                                      onChanged(section.id, i, value),
+                                  multiline: true,
+                                  placeholder: 'tap to edit',
+                                  displayBuilder: _inlineRenderer,
+                                  isReadOnly: isExportMode,
+                                  showPlaceholderWhenEmpty: !isExportMode,
                                 ),
-                              ],
-                            ),
-                          ),
-                        Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: EditableValue(
-                            value: section.cells[i]
-                                .map((e) => e.raw)
-                                .join('\n'),
-                            onCommit: (value) =>
-                                onChanged(section.id, i, value),
-                            multiline: true,
-                            placeholder: 'tap to edit',
-                            displayBuilder: _inlineRenderer,
-                            isReadOnly: isExportMode,
-                            showPlaceholderWhenEmpty: !isExportMode,
+                              ),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
-                  ),
+                      ),
+                  ],
                 ),
-            ],
+              );
+              // Editing can scroll individual sections; exports must paint the
+              // complete row onto the card's expanded capture surface.
+              return isExportMode
+                  ? content
+                  : SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: content,
+                    );
+            },
           ),
         ],
       ),
@@ -458,44 +557,51 @@ class _BattleBoxRow extends StatelessWidget {
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: _infoboxBorder)),
       ),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              width: 120,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              decoration: const BoxDecoration(
-                color: _infoboxLabelBackground,
-                border: Border(right: BorderSide(color: _infoboxBorder)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      label,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: const Color(0xFF202122),
+      child: LayoutBuilder(
+        builder: (context, constraints) => IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: (constraints.maxWidth * 0.36)
+                    .clamp(80.0, 120.0)
+                    .toDouble(),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                decoration: const BoxDecoration(
+                  color: _infoboxLabelBackground,
+                  border: Border(right: BorderSide(color: _infoboxBorder)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF202122),
+                        ),
                       ),
                     ),
+                    if (showAdd)
+                      _IconButton(
+                        icon: Icons.add,
+                        tooltip: 'Add item',
+                        onPressed: onAdd,
+                      ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
                   ),
-                  if (showAdd)
-                    _IconButton(
-                      icon: Icons.add,
-                      tooltip: 'Add item',
-                      onPressed: onAdd,
-                    ),
-                ],
+                  child: child,
+                ),
               ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: child,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
